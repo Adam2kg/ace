@@ -10,6 +10,8 @@ Usage:
     ace debt --state-file ace_state.json  # show attractor debt
 """
 
+from __future__ import annotations
+
 import json
 import sys
 
@@ -31,14 +33,23 @@ def main():
     pass
 
 
+_PRESET_LABELS = {
+    "architecture": "Architecture — Sonnet→Opus (synthesis-heavy, debate winner for creative work)",
+    "debugging": "Debugging — Sonnet→Opus (follow hypothesis deep, low noise)",
+    "design-review": "Design review — Haiku→Sonnet (fast variation, consistency tracking)",
+    "looping": "Looping — Haiku→Sonnet (throughput mode)",
+}
+_PRESET_RECOMMENDED = "architecture"
+
+
 @main.command()
 @click.argument("topic")
 @click.option("--cycles", default=1, show_default=True, help="Diverge→synthesize cycles to run")
 @click.option("--providers", default="codex,gemini", show_default=True,
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
-@click.option("--preset", default="architecture", show_default=True,
-              type=click.Choice(list(PRESETS.keys())), help="Coupling preset (task type)")
+@click.option("--preset", default=None, type=click.Choice(list(PRESETS.keys())),
+              help="Coupling preset. Omit to get an interactive recommendation.")
 @click.option("--human-mode", is_flag=True, default=False,
               help="Human is actively contributing divergence — AI divergence becomes amplifier")
 @click.option("--synthesis-strength", default=None, type=float,
@@ -51,12 +62,41 @@ def main():
               help="Override attractor debt surface threshold")
 def run(
     topic: str, cycles: int, providers: str, state_file: str | None,
-    preset: str, human_mode: bool,
+    preset: str | None, human_mode: bool,
     synthesis_strength: float | None, divergence_model: str | None,
     synthesis_model: str | None, budget: int | None, debt_threshold: float | None,
 ):
     """Run an ACE session on TOPIC."""
     provider_list = [p.strip() for p in providers.split(",")]
+
+    # Interactive preset selection when not given explicitly
+    if preset is None:
+        console.print("\n[bold cyan]ACE — Select coupling preset[/bold cyan]")
+        console.print("[dim]Recommendations from 3-round multi-provider debate:[/dim]\n")
+        choices = list(PRESETS.keys())
+        for i, key in enumerate(choices, 1):
+            rec = " [green](recommended — debate winner)[/green]" if key == _PRESET_RECOMMENDED else ""
+            console.print(f"  [{i}] {_PRESET_LABELS[key]}{rec}")
+        console.print()
+        raw = click.prompt(
+            "Preset",
+            default="1",
+            show_default=True,
+        ).strip()
+        # Accept number or name
+        if raw.isdigit() and 1 <= int(raw) <= len(choices):
+            preset = choices[int(raw) - 1]
+        elif raw in choices:
+            preset = raw
+        else:
+            console.print(f"[red]Unknown selection '{raw}', defaulting to {_PRESET_RECOMMENDED}[/red]")
+            preset = _PRESET_RECOMMENDED
+
+        if not human_mode:
+            human_mode = click.confirm(
+                "Are you actively contributing ideas? (human-mode: AI divergence becomes amplifier)",
+                default=False,
+            )
 
     profile = get_preset(preset)
     if human_mode:
