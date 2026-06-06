@@ -21,6 +21,7 @@ from rich.table import Table
 from ace.agents.divergence import diverge
 from ace.agents.synthesis import TrajectorySegment, synthesize
 from ace.coupling.function import CouplingFunction
+from ace.presets import PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
 
 console = Console()
 
@@ -36,20 +37,63 @@ def main():
 @click.option("--providers", default="codex,gemini", show_default=True,
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
-@click.option("--budget", default=3, show_default=True, help="Base interrupt budget per cycle")
-def run(topic: str, cycles: int, providers: str, state_file: str | None, budget: int):
+@click.option("--preset", default="architecture", show_default=True,
+              type=click.Choice(list(PRESETS.keys())), help="Coupling preset (task type)")
+@click.option("--human-mode", is_flag=True, default=False,
+              help="Human is actively contributing divergence — AI divergence becomes amplifier")
+@click.option("--synthesis-strength", default=None, type=float,
+              help="Override synthesis strength (1.0–5.0)")
+@click.option("--divergence-model", default=None, help="Override divergence model")
+@click.option("--synthesis-model", default=None, help="Override synthesis model")
+@click.option("--budget", default=None, type=int,
+              help="Override base interrupt budget (preset default used if omitted)")
+@click.option("--debt-threshold", default=None, type=float,
+              help="Override attractor debt surface threshold")
+def run(
+    topic: str, cycles: int, providers: str, state_file: str | None,
+    preset: str, human_mode: bool,
+    synthesis_strength: float | None, divergence_model: str | None,
+    synthesis_model: str | None, budget: int | None, debt_threshold: float | None,
+):
     """Run an ACE session on TOPIC."""
     provider_list = [p.strip() for p in providers.split(",")]
 
+    profile = get_preset(preset)
+    if human_mode:
+        profile = apply_human_mode(profile)
+    profile = apply_overrides(
+        profile,
+        synthesis_strength=synthesis_strength,
+        divergence_model=divergence_model,
+        synthesis_model=synthesis_model,
+        budget=budget,
+        debt_threshold=debt_threshold,
+    )
+
+    mode_tag = "[magenta]human-mode[/magenta] " if human_mode else ""
     console.print(Panel(
         f"[bold cyan]ACE — Asymmetric Cognitive Equilibrium[/bold cyan]\n"
         f"[dim]Topic:[/dim] {topic}\n"
-        f"[dim]Providers:[/dim] {' '.join(f'[yellow]{p}[/yellow]' for p in provider_list)} + [blue]synthesis(claude)[/blue]\n"
-        f"[dim]Cycles:[/dim] {cycles}",
+        f"[dim]Preset:[/dim] [green]{preset}[/green] {mode_tag}\n"
+        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] ({', '.join(provider_list)})\n"
+        f"[dim]Synthesis:[/dim] [blue]{profile.synthesis_model}[/blue] "
+        f"(strength {profile.synthesis_strength}/5{'↗' if profile.dynamic_cq else ''})\n"
+        f"[dim]Cycles:[/dim] {cycles} | "
+        f"[dim]Debt threshold:[/dim] {profile.debt_surface_threshold} | "
+        f"[dim]Budget:[/dim] {profile.base_interrupt_budget}",
         border_style="cyan",
     ))
+    if human_mode:
+        console.print(
+            "[magenta]Human mode:[/magenta] You are the primary divergence engine. "
+            "AI divergence amplifies and finds edge cases. Convergence warnings suppressed."
+        )
 
-    coupling = CouplingFunction(base_interrupt_budget=budget)
+    coupling = CouplingFunction(
+        base_interrupt_budget=profile.base_interrupt_budget,
+        receptivity_noise_sigma=profile.receptivity_noise_sigma,
+        debt_surface_threshold=profile.debt_surface_threshold,
+    )
     trajectory: list[TrajectorySegment] = []
 
     for cycle_n in range(1, cycles + 1):
@@ -96,7 +140,7 @@ def run(topic: str, cycles: int, providers: str, state_file: str | None, budget:
             for s in result.high_debt_surfaced:
                 console.print(f"  ↑ {s[:80]}")
 
-        if result.convergence_warning:
+        if result.convergence_warning and profile.convergence_warning_enabled:
             console.print("\n[bold red]⚠ CONVERGENCE WARNING:[/bold red] High agreement rate detected. "
                          "The divergence agent may be captured by the synthesis agent's frame. "
                          "Consider increasing noise or switching divergence providers.")
