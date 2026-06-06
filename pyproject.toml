@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ace"
+version = "0.1.0"
+description = "Asymmetric Cognitive Equilibrium — coupling function engine for multi-provider AI orchestration"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+ace = "ace.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ace"]
