@@ -38,6 +38,8 @@ _PRESET_LABELS = {
     "debugging": "Debugging — Sonnet→Opus (follow hypothesis deep, low noise)",
     "design-review": "Design review — Haiku→Sonnet (fast variation, consistency tracking)",
     "looping": "Looping — Haiku→Sonnet (throughput mode)",
+    "frames-deep": "Frames-deep — Sonnet→Sonnet, single provider (conceptual / budget-constrained / quota fallback)",
+    "frames-adversarial": "Frames-adversarial — Sonnet→Opus, single provider (security / regulated / threat modeling)",
 }
 _PRESET_RECOMMENDED = "architecture"
 
@@ -110,12 +112,20 @@ def run(
         debt_threshold=debt_threshold,
     )
 
+    frames_tag = "[cyan]frames-only[/cyan] " if profile.frames_only else ""
     mode_tag = "[magenta]human-mode[/magenta] " if human_mode else ""
+    divergence_line = (
+        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
+        f"(frames-{profile.frames_set})"
+        if profile.frames_only else
+        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
+        f"({', '.join(provider_list)}) + cognitive frames"
+    )
     console.print(Panel(
         f"[bold cyan]ACE — Asymmetric Cognitive Equilibrium[/bold cyan]\n"
         f"[dim]Topic:[/dim] {topic}\n"
-        f"[dim]Preset:[/dim] [green]{preset}[/green] {mode_tag}\n"
-        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] ({', '.join(provider_list)})\n"
+        f"[dim]Preset:[/dim] [green]{preset}[/green] {frames_tag}{mode_tag}\n"
+        f"{divergence_line}\n"
         f"[dim]Synthesis:[/dim] [blue]{profile.synthesis_model}[/blue] "
         f"(strength {profile.synthesis_strength}/5{'↗' if profile.dynamic_cq else ''})\n"
         f"[dim]Cycles:[/dim] {cycles} | "
@@ -128,6 +138,11 @@ def run(
             "[magenta]Human mode:[/magenta] You are the primary divergence engine. "
             "AI divergence amplifies and finds edge cases. Convergence warnings suppressed."
         )
+    if profile.frames_only:
+        console.print(
+            f"[cyan]Frames-only mode:[/cyan] Single provider, cognitive frames "
+            f"({profile.frames_set} set). No multi-provider dispatch."
+        )
 
     coupling = CouplingFunction(
         base_interrupt_budget=profile.base_interrupt_budget,
@@ -139,8 +154,13 @@ def run(
     for cycle_n in range(1, cycles + 1):
         console.rule(f"[cyan]Cycle {cycle_n}/{cycles} — Diverge[/cyan]")
 
-        with console.status("[yellow]🔴🟡 Dispatching divergence agents in parallel...[/yellow]"):
-            results = diverge(topic, provider_list)
+        dispatch_label = (
+            "[cyan]🔵 Running frames-only divergence...[/cyan]"
+            if profile.frames_only else
+            "[yellow]🔴🟡 Dispatching divergence agents + cognitive frames in parallel...[/yellow]"
+        )
+        with console.status(dispatch_label):
+            results = diverge(topic, provider_list, use_frames=not profile.frames_only)
 
         all_branches = []
         for r in results:
@@ -148,14 +168,26 @@ def run(
             if not r.available:
                 console.print(f"{indicator} [red]{r.provider}[/red]: unavailable ({r.error})")
                 continue
-            console.print(f"\n{indicator} [bold]{r.provider}[/bold] ({r.elapsed:.1f}s) — {len(r.branches)} branches:")
+            frame_label = f" [dim][{r.frame_id}][/dim]" if r.frame_id else ""
+            console.print(
+                f"\n{indicator} [bold]{r.provider}[/bold]{frame_label} "
+                f"({r.elapsed:.1f}s) — {len(r.branches)} branches:"
+            )
             for b in r.branches:
-                console.print(f"  • {b.content}")
+                trust_marker = " [red][low-trust][/red]" if b.low_trust_flag else ""
+                score_str = f" [dim]n={b.score.novelty:.2f} c={b.score.coherence:.2f}[/dim]" if b.score else ""
+                console.print(f"  •{trust_marker} {b.content}{score_str}")
             all_branches.extend(r.branches)
 
         if not all_branches:
             console.print("[red]No branches from any divergence provider. Check provider availability.[/red]")
             sys.exit(1)
+
+        if coupling.frame_monoculture_risk(all_branches):
+            console.print(
+                "\n[bold yellow]⚠ FRAME MONOCULTURE:[/bold yellow] > 80% of weighted branches "
+                "share the same cognitive frame. Frame rotation recommended before next cycle."
+            )
 
         console.rule(f"[blue]Cycle {cycle_n}/{cycles} — Synthesize[/blue]")
 

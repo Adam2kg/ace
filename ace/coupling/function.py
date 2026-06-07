@@ -30,6 +30,23 @@ class ReceptivityState(Enum):
 
 
 @dataclass
+class ScoreVector:
+    """
+    Metadata from the divergence scoring pass (populated by adhd-style scoring).
+    Used by the coupling function as weights, never as prune gates.
+
+    novelty:          0-1, distance from the obvious default answer
+    coherence:        0-1, how well the branch addresses the stated problem
+    frame_saturation: 0-1, how much the frame explains the output rather than
+                      the problem — high saturation → frame drift risk in
+                      multi-round sessions
+    """
+    novelty: float = 0.5
+    coherence: float = 0.5
+    frame_saturation: float = 0.0
+
+
+@dataclass
 class Branch:
     content: str
     timestamp: float = field(default_factory=time.time)
@@ -37,6 +54,10 @@ class Branch:
     receptivity_at_deferral: ReceptivityState = ReceptivityState.NEUTRAL
     deferred_count: int = 0
     decay_constant: float = 0.1   # higher = faster decay of debt weight
+    # Frame and scoring fields — optional, all backward-compatible
+    frame_id: str | None = None        # which cognitive frame generated this branch
+    score: ScoreVector | None = None   # populated by adhd-style scoring pass
+    low_trust_flag: bool = False        # True when coherence < 0.3; propagates to synthesis
 
 
 @dataclass
@@ -193,6 +214,39 @@ class CouplingFunction:
                 "phase": self.relational_context.phase,
             },
         }
+
+    # ── adhd score integration ────────────────────────────────────────────────
+
+    def synthesis_weight(self, branch: Branch) -> float:
+        """
+        Priority weight for synthesis: novelty × sigmoid(coherence).
+        Used to order branches for the synthesis agent — high novelty + high
+        coherence surfaces first. Unscored branches receive neutral weight 1.0.
+        Does NOT prune — a weight of 0.1 still enters the synthesis pass.
+        """
+        if branch.score is None:
+            return 1.0
+        coherence_sigmoid = 1.0 / (1.0 + math.exp(-10.0 * (branch.score.coherence - 0.5)))
+        return branch.score.novelty * coherence_sigmoid
+
+    def frame_monoculture_risk(self, branches: list[Branch]) -> bool:
+        """
+        True when > 80% of weighted branches share the same frame_id.
+        Signals diversity failure: all divergence came from one cognitive angle.
+        Caller should rotate frames rather than continuing.
+        """
+        scored = [b for b in branches if b.score is not None and b.frame_id is not None]
+        if len(scored) < 2:
+            return False
+        weights = [(b, self.synthesis_weight(b)) for b in scored]
+        total = sum(w for _, w in weights)
+        if total == 0.0:
+            return False
+        frame_share: dict[str, float] = {}
+        for b, w in weights:
+            fid = b.frame_id or "unknown"
+            frame_share[fid] = frame_share.get(fid, 0.0) + w
+        return max(frame_share.values()) / total > 0.8
 
     # ── Convergence detection ─────────────────────────────────────────────────
 

@@ -47,6 +47,11 @@ class CouplingProfile:
     # AI divergence becomes an amplifier, not the primary generator.
     human_divergence_model: str = ""    # defaults to one tier below divergence_model
     human_interrupt_budget: int = 0     # defaults to base_interrupt_budget + 2
+    # Frame mode: single-provider with cognitive frames instead of multi-provider dispatch.
+    # Correct for: conceptual problems, budget ceiling, latency constraint, quota fallback,
+    # data trust boundary, reproducibility, adversarial threat modeling.
+    frames_only: bool = False
+    frames_set: str = "general"         # "general" | "adversarial" — selects frame subset
     human_convergence_warning: bool = False  # high agreement is healthy in human-mode
 
 
@@ -117,6 +122,44 @@ PRESETS: dict[str, CouplingProfile] = {
             "Repetitive/looping work: Haiku divergence (variation-within-pattern) + "
             "Sonnet synthesis (enough state to avoid circular repetition). "
             "Haiku/Haiku would lose trajectory; Sonnet synthesis prevents that cheaply."
+        ),
+    ),
+    "frames-deep": CouplingProfile(
+        name="frames-deep",
+        divergence_model="claude-sonnet-4-6",
+        synthesis_model="claude-sonnet-4-6",
+        synthesis_strength=3.0,
+        base_interrupt_budget=5,
+        debt_surface_threshold=2.0,
+        receptivity_noise_sigma=0.15,
+        dynamic_cq=False,
+        frames_only=True,
+        frames_set="general",
+        description=(
+            "Single-provider, multiple cognitive frames — no multi-provider dispatch. "
+            "Correct when: conceptual/evaluative problem, budget < $0.10/query, "
+            "latency < 2s, provider quota exhausted, or data cannot leave one trust boundary. "
+            "Frame set: regulator, ten-year-old, inversion, remove-assumption, extreme-zero."
+        ),
+    ),
+    "frames-adversarial": CouplingProfile(
+        name="frames-adversarial",
+        divergence_model="claude-sonnet-4-6",
+        synthesis_model="claude-opus-4-8",
+        synthesis_strength=4.0,
+        base_interrupt_budget=4,
+        debt_surface_threshold=2.5,
+        receptivity_noise_sigma=0.1,
+        dynamic_cq=False,
+        frames_only=True,
+        frames_set="adversarial",
+        convergence_warning_enabled=False,  # adversarial frames produce intentional convergence
+        description=(
+            "Single-provider, adversarial frame set — for security threat modeling, "
+            "regulated environments requiring reproducible outputs, and adversarial "
+            "robustness testing. Consistent provider blind spots are preferable to "
+            "variable cross-provider gaps when auditing attack surfaces. "
+            "Frame set: adversary, inversion, ops-3am, extreme-zero, remove-assumption."
         ),
     ),
 }
