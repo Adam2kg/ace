@@ -94,17 +94,25 @@ class CouplingFunction:
         budget_per_trajectory_segment: int = 1,
         receptivity_noise_sigma: float = 0.15,
         debt_surface_threshold: float = 2.5,
+        mode: str = "ai",
     ):
         self.base_interrupt_budget = base_interrupt_budget
         self.budget_per_segment = budget_per_trajectory_segment
         self.receptivity_noise_sigma = receptivity_noise_sigma
         self.debt_surface_threshold = debt_surface_threshold
+        # Root mode: "ai" (Governor — entropy reduction) or "human" (Mirror — entropy production).
+        # These are anti-correlated optimization targets; do NOT share a CouplingFunction
+        # instance across modes in the same session.
+        self.mode = mode
 
         self._interrupt_budget = base_interrupt_budget
-        self._receptivity = ReceptivityState.NEUTRAL
+        # Human-mode starts OPEN: the human needs the widest divergence window immediately.
+        # AI-mode starts NEUTRAL: synthesis pressure builds from a stable baseline.
+        self._receptivity = ReceptivityState.OPEN if mode == "human" else ReceptivityState.NEUTRAL
         self._deferral_queue: list[Branch] = []
         self._trajectory_segments_completed = 0
         self._cycle_start = time.time()
+        self._mode_transitions: list[dict] = []   # explicit named mode switches within session
         self.relational_context = RelationalContext()
 
     # ── Interrupt budget ─────────────────────────────────────────────────────
@@ -201,6 +209,8 @@ class CouplingFunction:
         This is the state that cannot survive re-pairing with a different agent.
         """
         return {
+            "mode": self.mode,
+            "mode_transitions": self._mode_transitions,
             "interrupt_budget": self._interrupt_budget,
             "receptivity": self._receptivity.value,
             "deferred_count": len(self._deferral_queue),
@@ -248,20 +258,69 @@ class CouplingFunction:
             frame_share[fid] = frame_share.get(fid, 0.0) + w
         return max(frame_share.values()) / total > 0.8
 
-    # ── Convergence detection ─────────────────────────────────────────────────
+    # ── Mode transition ───────────────────────────────────────────────────────
+
+    def transition_mode(self, new_mode: str, reason: str = "") -> None:
+        """
+        Explicitly switch the coupling function's optimization target mid-session.
+        This is a named event — it is tracked in the session record, not silent.
+        The caller is responsible for instantiating a new CouplingFunction for the
+        new mode if strict isolation is required; this method records the transition.
+        """
+        self._mode_transitions.append({
+            "from": self.mode,
+            "to": new_mode,
+            "reason": reason,
+            "at_segment": self._trajectory_segments_completed,
+            "timestamp": time.time(),
+        })
+        old_mode = self.mode
+        self.mode = new_mode
+        if new_mode == "human" and old_mode == "ai":
+            # Opening up: restore OPEN receptivity and high budget
+            self._receptivity = ReceptivityState.OPEN
+            self._interrupt_budget = max(self._interrupt_budget, self.base_interrupt_budget)
+        elif new_mode == "ai" and old_mode == "human":
+            # Narrowing: move to NEUTRAL, synthesis can now drive
+            if self._receptivity == ReceptivityState.OPEN:
+                self._receptivity = ReceptivityState.NEUTRAL
+
+    # ── Convergence and overthinking detection ────────────────────────────────
 
     def convergence_warning(self, recent_agreement_rate: float) -> bool:
         """
-        High agreement between agents is a warning signal in ACE, not a success.
-        Returns True if the system may be in creative capture rather than
-        legitimate convergence.
+        In AI-mode: high agreement = creative capture risk.
+        In Human-mode: high agreement = premature closure risk (human locked up).
+        Both fire True to signal the caller to inject disruptive divergence.
         """
-        if recent_agreement_rate < 0.8:
+        if self.mode == "ai":
+            if recent_agreement_rate < 0.8:
+                return False
+            if len(self._deferral_queue) == 0 and self._interrupt_budget > 1:
+                return True  # budget available but nothing being sent = capture
             return False
-        # Check if divergence agent has stopped producing genuinely novel branches
-        if len(self._deferral_queue) == 0 and self._interrupt_budget > 1:
-            return True  # budget available but nothing being sent = capture
-        return False
+        else:
+            # Human-mode: premature convergence = human locking onto unexamined frame
+            if recent_agreement_rate < 0.75:
+                return False
+            # High agreement AND low debt = human resolved without exploring alternatives
+            debt = self.attractor_debt()
+            total_debt = sum(debt.values())
+            return total_debt < 1.0  # converged before accumulating meaningful attractors
+
+    def overthinking_warning(self) -> bool:
+        """
+        Human-mode only: fires when the same attractor hash keeps re-emerging
+        after nominal closure (re-emergence debt). Signals trajectory clutch:
+        force binary closure before resuming divergence.
+
+        Detects: branches that have been deferred 3+ times are still in queue,
+        indicating the human cannot close them — half-open integration loops.
+        """
+        if self.mode != "human":
+            return False
+        chronic = [b for b in self._deferral_queue if b.deferred_count >= 3]
+        return len(chronic) >= 2  # two or more chronically un-closable attractors
 
     def _snapshot_trajectory(self) -> dict[str, Any]:
         return {

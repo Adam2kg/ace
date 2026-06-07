@@ -23,7 +23,7 @@ from rich.table import Table
 from ace.agents.divergence import diverge
 from ace.agents.synthesis import TrajectorySegment, synthesize
 from ace.coupling.function import CouplingFunction
-from ace.presets import PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
+from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
 
 console = Console()
 
@@ -33,7 +33,7 @@ def main():
     pass
 
 
-_PRESET_LABELS = {
+_AI_PRESET_LABELS = {
     "architecture": "Architecture — Sonnet→Opus (synthesis-heavy, debate winner for creative work)",
     "debugging": "Debugging — Sonnet→Opus (follow hypothesis deep, low noise)",
     "design-review": "Design review — Haiku→Sonnet (fast variation, consistency tracking)",
@@ -41,7 +41,12 @@ _PRESET_LABELS = {
     "frames-deep": "Frames-deep — Sonnet→Sonnet, single provider (conceptual / budget-constrained / quota fallback)",
     "frames-adversarial": "Frames-adversarial — Sonnet→Opus, single provider (security / regulated / threat modeling)",
 }
-_PRESET_RECOMMENDED = "architecture"
+_HUMAN_PRESET_LABELS = {
+    "human-scientific": "Scientific/architectural — Mirror mode, surface attractors fast, warn on premature closure",
+    "human-creative": "Creative/narrative — Mirror mode, wide divergence window, no convergence pressure",
+}
+_AI_PRESET_RECOMMENDED = "architecture"
+_HUMAN_PRESET_RECOMMENDED = "human-scientific"
 
 
 @main.command()
@@ -51,7 +56,10 @@ _PRESET_RECOMMENDED = "architecture"
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
 @click.option("--preset", default=None, type=click.Choice(list(PRESETS.keys())),
-              help="Coupling preset. Omit to get an interactive recommendation.")
+              help="Coupling preset (power-user: skips mode question, implies --mode a for ai presets).")
+@click.option("--mode", default=None, type=click.Choice(["h", "a", "human", "ai"]),
+              help="Root mode: h/human (I need to think) or a/ai (my AI needs to think). "
+                   "Omit to get the mode question.")
 @click.option("--human-mode", is_flag=True, default=False,
               help="Human is actively contributing divergence — AI divergence becomes amplifier")
 @click.option("--synthesis-strength", default=None, type=float,
@@ -64,37 +72,67 @@ _PRESET_RECOMMENDED = "architecture"
               help="Override attractor debt surface threshold")
 def run(
     topic: str, cycles: int, providers: str, state_file: str | None,
-    preset: str | None, human_mode: bool,
+    preset: str | None, mode: str | None, human_mode: bool,
     synthesis_strength: float | None, divergence_model: str | None,
     synthesis_model: str | None, budget: int | None, debt_threshold: float | None,
 ):
     """Run an ACE session on TOPIC."""
     provider_list = [p.strip() for p in providers.split(",")]
 
-    # Interactive preset selection when not given explicitly
-    if preset is None:
-        console.print("\n[bold cyan]ACE — Select coupling preset[/bold cyan]")
-        console.print("[dim]Recommendations from 3-round multi-provider debate:[/dim]\n")
-        choices = list(PRESETS.keys())
-        for i, key in enumerate(choices, 1):
-            rec = " [green](recommended — debate winner)[/green]" if key == _PRESET_RECOMMENDED else ""
-            console.print(f"  [{i}] {_PRESET_LABELS[key]}{rec}")
-        console.print()
-        raw = click.prompt(
-            "Preset",
-            default="1",
-            show_default=True,
-        ).strip()
-        # Accept number or name
-        if raw.isdigit() and 1 <= int(raw) <= len(choices):
-            preset = choices[int(raw) - 1]
-        elif raw in choices:
-            preset = raw
-        else:
-            console.print(f"[red]Unknown selection '{raw}', defaulting to {_PRESET_RECOMMENDED}[/red]")
-            preset = _PRESET_RECOMMENDED
+    # Normalize mode flag
+    if mode in ("h", "human"):
+        mode = "human"
+    elif mode in ("a", "ai"):
+        mode = "ai"
 
-        if not human_mode:
+    # --preset implies ai-mode for all existing ai presets; human presets set mode automatically
+    if preset is not None and mode is None:
+        preset_obj = PRESETS.get(preset)
+        if preset_obj:
+            mode = preset_obj.mode  # read from preset definition
+
+    # Root mode declaration — one question, not skippable unless --mode or --preset given
+    if mode is None:
+        console.print("\n[bold cyan]ACE — How would you like to think?[/bold cyan]\n")
+        console.print("  [H] I need to think through something   [dim](human-mode: Mirror)[/dim]")
+        console.print("  [A] My AI needs to think through this   [dim](ai-mode: Governor)[/dim]")
+        console.print()
+        raw = click.prompt("Mode", default="H").strip().upper()
+        mode = "human" if raw in ("H", "HUMAN", "") else "ai"
+
+    # Select preset — human-mode picks from human presets, ai-mode from ai presets
+    if preset is None:
+        if mode == "human":
+            console.print("\n[bold cyan]ACE — Task type[/bold cyan]\n")
+            h_choices = list(_HUMAN_PRESET_LABELS.keys())
+            for i, key in enumerate(h_choices, 1):
+                rec = " [green](recommended)[/green]" if key == _HUMAN_PRESET_RECOMMENDED else ""
+                console.print(f"  [{i}] {_HUMAN_PRESET_LABELS[key]}{rec}")
+            console.print()
+            raw = click.prompt("Type", default="1", show_default=True).strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(h_choices):
+                preset = h_choices[int(raw) - 1]
+            elif raw in h_choices:
+                preset = raw
+            else:
+                preset = DEFAULT_HUMAN_PRESET
+        else:
+            console.print("\n[bold cyan]ACE — Select coupling preset[/bold cyan]")
+            console.print("[dim]Recommendations from 3-round multi-provider debate:[/dim]\n")
+            choices = list(_AI_PRESET_LABELS.keys())
+            for i, key in enumerate(choices, 1):
+                rec = " [green](recommended — debate winner)[/green]" if key == _AI_PRESET_RECOMMENDED else ""
+                console.print(f"  [{i}] {_AI_PRESET_LABELS[key]}{rec}")
+            console.print()
+            raw = click.prompt("Preset", default="1", show_default=True).strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(choices):
+                preset = choices[int(raw) - 1]
+            elif raw in choices:
+                preset = raw
+            else:
+                preset = _AI_PRESET_RECOMMENDED
+
+        if mode == "ai" and not human_mode:
             human_mode = click.confirm(
                 "Are you actively contributing ideas? (human-mode: AI divergence becomes amplifier)",
                 default=False,
@@ -114,6 +152,11 @@ def run(
 
     frames_tag = "[cyan]frames-only[/cyan] " if profile.frames_only else ""
     mode_tag = "[magenta]human-mode[/magenta] " if human_mode else ""
+    root_mode_label = (
+        "[bold green]MIRROR[/bold green] [dim](human thinking scaffold)[/dim]"
+        if mode == "human" else
+        "[bold blue]GOVERNOR[/bold blue] [dim](AI thinking scaffold)[/dim]"
+    )
     divergence_line = (
         f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
         f"(frames-{profile.frames_set})"
@@ -123,6 +166,7 @@ def run(
     )
     console.print(Panel(
         f"[bold cyan]ACE — Asymmetric Cognitive Equilibrium[/bold cyan]\n"
+        f"[dim]Mode:[/dim] {root_mode_label}\n"
         f"[dim]Topic:[/dim] {topic}\n"
         f"[dim]Preset:[/dim] [green]{preset}[/green] {frames_tag}{mode_tag}\n"
         f"{divergence_line}\n"
@@ -131,9 +175,14 @@ def run(
         f"[dim]Cycles:[/dim] {cycles} | "
         f"[dim]Debt threshold:[/dim] {profile.debt_surface_threshold} | "
         f"[dim]Budget:[/dim] {profile.base_interrupt_budget}",
-        border_style="cyan",
+        border_style="cyan" if mode == "ai" else "green",
     ))
-    if human_mode:
+    if mode == "human":
+        console.print(
+            "[bold green]Mirror mode:[/bold green] AI amplifies your thinking. "
+            "Synthesis holds back until you have material to work with."
+        )
+    if human_mode and mode == "ai":
         console.print(
             "[magenta]Human mode:[/magenta] You are the primary divergence engine. "
             "AI divergence amplifies and finds edge cases. Convergence warnings suppressed."
@@ -148,6 +197,7 @@ def run(
         base_interrupt_budget=profile.base_interrupt_budget,
         receptivity_noise_sigma=profile.receptivity_noise_sigma,
         debt_surface_threshold=profile.debt_surface_threshold,
+        mode=mode,
     )
     trajectory: list[TrajectorySegment] = []
 
@@ -189,6 +239,13 @@ def run(
                 "share the same cognitive frame. Frame rotation recommended before next cycle."
             )
 
+        if coupling.overthinking_warning():
+            console.print(
+                "\n[bold yellow]⚠ OVERTHINKING DETECTED:[/bold yellow] Same attractors "
+                "returning after nominal closure (re-emergence debt). "
+                "Forcing binary closure — commit or explicitly discard before continuing."
+            )
+
         console.rule(f"[blue]Cycle {cycle_n}/{cycles} — Synthesize[/blue]")
 
         debt = coupling.attractor_debt()
@@ -213,9 +270,18 @@ def run(
                 console.print(f"  ↑ {s[:80]}")
 
         if result.convergence_warning and profile.convergence_warning_enabled:
-            console.print("\n[bold red]⚠ CONVERGENCE WARNING:[/bold red] High agreement rate detected. "
-                         "The divergence agent may be captured by the synthesis agent's frame. "
-                         "Consider increasing noise or switching divergence providers.")
+            if mode == "human":
+                console.print(
+                    "\n[bold red]⚠ PREMATURE CLOSURE:[/bold red] High agreement before "
+                    "sufficient exploration. You may be locking onto a frame before testing it. "
+                    "Consider holding this conclusion open for one more cycle."
+                )
+            else:
+                console.print(
+                    "\n[bold red]⚠ CONVERGENCE WARNING:[/bold red] High agreement rate detected. "
+                    "The divergence agent may be captured by the synthesis agent's frame. "
+                    "Consider increasing noise or switching divergence providers."
+                )
 
         trajectory.append(TrajectorySegment(
             content=result.trajectory_update,
@@ -268,3 +334,7 @@ def debt(state_file: str):
         console.print("\n[magenta]High-debt branches needing re-examination:[/magenta]")
         for b in state["high_debt_branches"]:
             console.print(f"  ↑ {b[:100]}")
+
+
+if __name__ == "__main__":
+    main()

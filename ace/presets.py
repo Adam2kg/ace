@@ -42,6 +42,13 @@ class CouplingProfile:
     dynamic_cq: bool            # if True, synthesis_strength rises as session matures
     convergence_warning_enabled: bool = True
     description: str = ""
+    # Root mode: what is being scaffolded?
+    #   "ai"    — AI is doing the thinking; coupling reduces entropy toward resolution
+    #             (Governor: minimize search space, follow hypothesis, synthesize hard)
+    #   "human" — Human is doing the thinking; coupling produces entropy for reflection
+    #             (Mirror: maximize search space, unstick attractors, synthesize gently)
+    # These are anti-correlated optimization targets; coupling functions must not share state.
+    mode: str = "ai"
     # Human-mode overrides: applied when --human-mode is active
     # When a human is in the loop they ARE the divergence engine;
     # AI divergence becomes an amplifier, not the primary generator.
@@ -162,9 +169,57 @@ PRESETS: dict[str, CouplingProfile] = {
             "Frame set: adversary, inversion, ops-3am, extreme-zero, remove-assumption."
         ),
     ),
+    # ── Human-mode presets ────────────────────────────────────────────────────
+    # Mirror optimization: maximize entropy, unstick attractors, scaffold reflection.
+    # AI divergence is an AMPLIFIER for human thinking, not the primary generator.
+    # Synthesis is gentle — it surfaces and reflects, does not resolve and close.
+    "human-scientific": CouplingProfile(
+        name="human-scientific",
+        mode="human",
+        divergence_model="claude-haiku-4-5-20251001",
+        synthesis_model="claude-sonnet-4-6",
+        synthesis_strength=2.0,       # low — human drives, AI scaffolds
+        base_interrupt_budget=6,      # high — human needs frequent prompts to unstick
+        debt_surface_threshold=1.5,   # low — surface attractors aggressively (blockade mode)
+        receptivity_noise_sigma=0.2,  # high — human thinking is unpredictable
+        dynamic_cq=True,              # synthesis presence rises as session matures
+        convergence_warning_enabled=True,  # warn on PREMATURE convergence (human locking up)
+        human_divergence_model="claude-haiku-4-5-20251001",
+        human_interrupt_budget=8,
+        description=(
+            "Human thinking scaffold — scientific/architectural domain. "
+            "Primary signal: convergence rate toward falsifiable claims. "
+            "Mirror mode: AI amplifies human divergence, surfaces attractor debt, "
+            "warns when human locks onto a frame before testing it. "
+            "Synthesis holds back at session start; presence rises as ideas accumulate."
+        ),
+    ),
+    "human-creative": CouplingProfile(
+        name="human-creative",
+        mode="human",
+        divergence_model="claude-haiku-4-5-20251001",
+        synthesis_model="claude-sonnet-4-6",
+        synthesis_strength=1.5,       # very low — creative work resists closure
+        base_interrupt_budget=7,      # high — creative needs wide divergence window
+        debt_surface_threshold=3.0,   # high — let attractor debt grow (productive discomfort)
+        receptivity_noise_sigma=0.25, # highest — lateral leaps and serendipity required
+        dynamic_cq=False,             # no automatic synthesis ramp — creative needs space
+        convergence_warning_enabled=False,  # premature closure kills creative depth
+        human_divergence_model="claude-haiku-4-5-20251001",
+        human_interrupt_budget=9,
+        description=(
+            "Human thinking scaffold — creative/narrative domain. "
+            "Primary signal: narrative tension gradient (surprise-to-coherence ratio). "
+            "Mirror mode: AI maintains lateral association pressure, resists premature closure. "
+            "Debt can grow large before synthesis — the human needs to live in "
+            "productive discomfort. Convergence warnings suppressed: creative convergence "
+            "is a choice, not a risk."
+        ),
+    ),
 }
 
 DEFAULT_PRESET = "architecture"
+DEFAULT_HUMAN_PRESET = "human-scientific"
 
 
 def get_preset(name: str) -> CouplingProfile:
