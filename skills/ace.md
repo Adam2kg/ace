@@ -162,7 +162,11 @@ Pick based on how you're thinking right now, not what you're thinking about.
 
 ### Explorer (`--preset human-adhd`)
 
-*Calibration pending — design intent, not observed use.*
+*Partially calibrated (1 live Mirror run). Budget/debt/resonance params unchanged.*
+*Known limitation: on **grounded engineering decisions** Explorer over-optimizes novelty —*
+*observed branches at novelty ~0.90 / coherence ~0.50 (metaphor-heavy, low actionability).*
+*Tuning decision: add a coherence floor (~0.70) for grounded/technical topics. See*
+*"Open tuning items" below. For now, prefer Deep Focus on concrete engineering tradeoffs.*
 
 - Interrupt budget: 8 (short attention cycles; switching is natural)
 - Debt threshold: 2.0 (surface deferred branches fast, before WM decay)
@@ -172,6 +176,7 @@ Pick based on how you're thinking right now, not what you're thinking about.
 
 Use when: open-ended exploration, decisions with many unknowns, feeling scattered,
 starting something new, or when the blank page is the enemy.
+**Not** for concrete engineering triage — use Deep Focus there.
 
 ### Deep Focus (`--preset human-scientific`)
 
@@ -189,6 +194,9 @@ or when interruption is costly.
 ---
 
 ## Synthesis focus options explained
+
+*Validated (1 live Mirror run): the single-focus panels were noticeably tighter and*
+*more useful than the old "full dump". The menu's complexity is justified — keep all four.*
 
 These are the choices presented at end of each Mirror-mode cycle:
 
@@ -210,10 +218,14 @@ debt accumulates as gravitational pull. When it exceeds the threshold (preset-de
 ACE surfaces those branches for mandatory re-examination.
 High debt = trajectory is being warped by invisible pressure.
 
-**Frame monoculture** — fires when all branches share the same metaphor domain.
+**Frame monoculture** — fires when > 80% of weighted branches share the same frame.
 Warning: *"Frame monoculture detected — all branches use [domain] framing.
 A perspective shift might reveal what this frame hides."*
 This is a structural warning, not a content warning.
+*Known limitation: with only one live divergence provider (e.g. codex quota-exhausted,*
+*gemini only), this fires on single-source bias rather than genuine cross-provider*
+*monoculture. Treat the warning as low-signal when fewer than 2 providers are live.*
+*Tuning decision: gate firing on ≥2 live providers. See "Open tuning items".*
 
 **Depth attractor signal** (Mirror mode) — positive signal when a branch is genuinely
 deepening across visits (not just being re-visited). ACE promotes it, does not warn.
@@ -271,7 +283,8 @@ progress delta (< 0.08) across all recent visits. If this fires on genuine deepe
 - This is a calibration gap — Explorer uses a lower depth delta floor (0.15) to better
   distinguish deepening from looping
 - Switch to Explorer or set `--preset human-adhd` explicitly
-- *Calibration pending — this threshold is design intent, not tuned from observed use*
+- *Still pending — the one calibration run (2 cycles) never triggered re-emergence, so the*
+  *0.08 stagnation threshold is untested. Needs a ≥4-cycle run with deliberate revisiting.*
 
 ### "Nothing is getting deferred / attractor debt is always 0"
 
@@ -320,3 +333,21 @@ If `ace` CLI is not found:
 ```bash
 cd ~/ace && pip install -e .
 ```
+
+---
+
+## Open tuning items
+
+Resolved from the first live Mirror calibration run (2 cycles, 360-editor decision).
+These are agreed code changes not yet implemented — tracked here so they aren't lost.
+
+| # | Item | Verdict | Change | Status |
+|---|------|---------|--------|--------|
+| 1 | Frame-monoculture detector | TUNE | Gate firing on ≥2 live divergence providers; with one provider the signal conflates source bias with structural monoculture | **code TODO** in `frame_monoculture_risk` |
+| 2 | Synthesis focus menu | VALIDATED | Keep all four options — focused panels beat the full dump | done (no change) |
+| 3 | Overthinking warning | KEEP-PENDING | Needs a ≥4-cycle run with deliberate revisiting to test the 0.08 stagnation threshold | awaiting run |
+| 4 | Explorer coherence floor | TUNE | Add a coherence floor (~0.70) for grounded/engineering topics so novelty can't drown actionability | **code TODO** in scoring/preset |
+
+**Blocker for the code TODOs:** there is no test suite for `ace/coupling/function.py`. Both
+behavioral changes (provider-gated monoculture, coherence floor) should land with unit tests
+rather than being tuned blind off a single run.
