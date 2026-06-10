@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -29,21 +30,85 @@ class ReceptivityState(Enum):
     LOCKED = "locked"        # trajectory committed
 
 
+# ── Depth / circularity detection thresholds ─────────────────────────────────
+# All module-level so they can be monkey-patched in tests.
+
+CIRCULAR_VISIT_THRESHOLD: int = 3    # visits needed before warning can fire
+CIRCULAR_DELTA_FLOOR: float = 0.08   # progress delta below this = circular
+DEPTH_DELTA_FLOOR: float = 0.20      # progress delta above this = deepening (monotropic flow)
+DEPTH_VISIT_THRESHOLD: int = 2       # consecutive deepening visits to promote depth signal
+CHRONIC_BRANCH_COUNT: int = 2        # circular branches needed to fire overthinking_warning
+
+# Stopwords for keyword extraction — expand as needed per domain.
+_ACE_STOPWORDS: frozenset[str] = frozenset({
+    "that", "this", "with", "from", "have", "been", "will", "they",
+    "what", "when", "then", "than", "also", "into", "some", "more",
+    "about", "which", "there", "their", "were", "just", "very",
+    "would", "could", "should", "does", "like", "each", "only",
+})
+
+
 @dataclass
 class ScoreVector:
     """
     Metadata from the divergence scoring pass (populated by adhd-style scoring).
     Used by the coupling function as weights, never as prune gates.
 
-    novelty:          0-1, distance from the obvious default answer
-    coherence:        0-1, how well the branch addresses the stated problem
-    frame_saturation: 0-1, how much the frame explains the output rather than
-                      the problem — high saturation → frame drift risk in
-                      multi-round sessions
+    novelty:          0-1, semantic distance from the current working frame.
+                      0.0 = fully redundant, 1.0 = maximally foreign.
+    coherence:        0-1, internal logical consistency of the branch.
+    frame_saturation: 0-1, how much of the current frame's vocabulary this branch covers.
+                      High saturation → frame drift risk in multi-round sessions.
+    resonance:        0-1, cross-branch echoing. How strongly this branch rhymes with
+                      sibling branches already in play. 0.0 = isolated idea,
+                      1.0 = maximally echoed across the active branch set.
+    depth_pressure:   0-1, accumulated elaboration demand. Concepts introduced relative
+                      to current expansion level — proxy for unresolved complexity.
     """
     novelty: float = 0.5
     coherence: float = 0.5
     frame_saturation: float = 0.0
+    resonance: float = 0.0       # NEW: cross-branch amplification signal
+    depth_pressure: float = 0.0  # NEW: unresolved elaboration demand
+
+
+# Sentinel for unscored branches. All values are neutral (0.5 for normalized fields,
+# 0.0 for additive fields). An unscored branch receives neutral synthesis weight —
+# neither promoted nor suppressed. Use branch.effective_score everywhere.
+SCORE_UNINITIALISED = ScoreVector(
+    novelty=0.5,
+    coherence=0.5,
+    frame_saturation=0.0,
+    resonance=0.0,
+    depth_pressure=0.0,
+)
+
+
+@dataclass
+class VisitSnapshot:
+    """
+    Immutable record of a branch's state at a single defer() or integrate() call.
+    Capped at 10 per branch to bound memory.
+    """
+    timestamp: float
+    content_length: int
+    keyword_set: frozenset[str]
+    visit_type: str       # "defer" | "integrate"
+    delta_score: float    # _branch_progress_delta() result; 0.0 for first visit
+
+
+@dataclass
+class DepthAttractorSignal:
+    """
+    Positive signal: a branch is deepening (monotropic flow), not looping.
+    Stored on CouplingFunction. Cleared when the branch is integrated.
+    When a branch keeps returning AND shows progress, that is the strength to amplify.
+    """
+    branch_sig: str               # branch.content[:80]
+    promoted_at: float            # epoch seconds
+    visit_count: int              # visit count at time of promotion
+    peak_delta: float             # highest delta_score seen across all visits
+    keyword_trajectory: list[frozenset[str]]  # keyword sets across visits, for display
 
 
 @dataclass
@@ -58,6 +123,18 @@ class Branch:
     frame_id: str | None = None        # which cognitive frame generated this branch
     score: ScoreVector | None = None   # populated by adhd-style scoring pass
     low_trust_flag: bool = False        # True when coherence < 0.3; propagates to synthesis
+    # Visit history for depth/circularity detection (capped at 10 entries)
+    visit_history: list[VisitSnapshot] = field(default_factory=list)
+    depth_promotions: int = 0     # how many times this branch triggered depth_attractor_signal
+
+    @property
+    def effective_score(self) -> ScoreVector:
+        """
+        Always use this in synthesis weight formulas.
+        Returns score if set, or SCORE_UNINITIALISED sentinel.
+        Avoids scattered None-guards throughout the codebase.
+        """
+        return self.score if self.score is not None else SCORE_UNINITIALISED
 
 
 @dataclass
@@ -114,14 +191,14 @@ class CouplingFunction:
         self._cycle_start = time.time()
         self._mode_transitions: list[dict] = []   # explicit named mode switches within session
         self.relational_context = RelationalContext()
+        # Positive depth signals: branches in monotropic flow (deepening, not looping).
+        # These are cleared when the branch integrates.
+        self.depth_attractor_signals: list[DepthAttractorSignal] = []
 
     # ── Interrupt budget ─────────────────────────────────────────────────────
 
     def can_interrupt(self, emergency: bool = False) -> bool:
-        if emergency:
-            cost = 2
-        else:
-            cost = 1
+        cost = 2 if emergency else 1
         return self._interrupt_budget >= cost
 
     def consume_interrupt(self, emergency: bool = False) -> bool:
@@ -165,13 +242,42 @@ class CouplingFunction:
     # ── Deferral and attractor debt ───────────────────────────────────────────
 
     def defer(self, branch: Branch) -> None:
+        """Defer a branch; records a visit snapshot for depth/circularity tracking."""
         branch.deferred_count += 1
         branch.receptivity_at_deferral = self._receptivity
         branch.trajectory_context = self._snapshot_trajectory()
+
+        # Record visit snapshot BEFORE appending to queue
+        delta = self._branch_progress_delta(branch)
+        snapshot = VisitSnapshot(
+            timestamp=time.time(),
+            content_length=len(branch.content),
+            keyword_set=self._extract_keywords(branch.content),
+            visit_type="defer",
+            delta_score=delta,
+        )
+        # Cap history at 10 entries
+        if len(branch.visit_history) >= 10:
+            branch.visit_history.pop(0)
+        branch.visit_history.append(snapshot)
+
         self._deferral_queue.append(branch)
 
     def integrate(self, branch: Branch) -> None:
         """Mark a branch as accepted into the trajectory."""
+        # Archival snapshot — terminal, not used in delta calculations
+        snapshot = VisitSnapshot(
+            timestamp=time.time(),
+            content_length=len(branch.content),
+            keyword_set=self._extract_keywords(branch.content),
+            visit_type="integrate",
+            delta_score=0.0,
+        )
+        branch.visit_history.append(snapshot)
+
+        # Clear depth signals for this branch (it has been resolved)
+        self.clear_depth_signals(branch.content[:80])
+
         self._deferral_queue = [b for b in self._deferral_queue if b is not branch]
         sig = branch.content[:80]
         self.relational_context.accepted_signatures.append(sig)
@@ -217,6 +323,10 @@ class CouplingFunction:
             "trajectory_segments_completed": self._trajectory_segments_completed,
             "attractor_debt": self.attractor_debt(),
             "high_debt_branches": [b.content for b in self.high_debt_branches()],
+            "depth_attractors": [
+                {"sig": s.branch_sig, "visit_count": s.visit_count, "peak_delta": s.peak_delta}
+                for s in self.depth_attractor_signals
+            ],
             "relational_context": {
                 "avg_response_time": self.relational_context.avg_response_time(),
                 "accepted_count": len(self.relational_context.accepted_signatures),
@@ -225,19 +335,155 @@ class CouplingFunction:
             },
         }
 
-    # ── adhd score integration ────────────────────────────────────────────────
+    # ── Keyword extraction ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_keywords(text: str) -> frozenset[str]:
+        """
+        Stopword-filtered, lowercase, alpha-only tokens, length >= 4.
+        No stemming. No models. Pure heuristic.
+        """
+        tokens = re.findall(r'[a-z]{4,}', text.lower())
+        return frozenset(t for t in tokens if t not in _ACE_STOPWORDS)
+
+    # ── Depth / circularity detection ─────────────────────────────────────────
+
+    def _branch_progress_delta(self, branch: Branch) -> float:
+        """
+        Return [0.0, 1.0] measuring how much the branch has progressed since last visit.
+        0.0 = circular (same content, same words, same structure).
+        1.0 = maximum progress.
+
+        Three equal-weight signals:
+          CLDelta: content length change (deepening adds words)
+          KNDelta: keyword Jaccard complement (deepening introduces new vocabulary)
+          SNDelta: sentence count delta (deepening adds propositions)
+        """
+        if not branch.visit_history:
+            return 0.0  # first visit — no prior to compare
+
+        prior = branch.visit_history[-1]
+        current_length = len(branch.content)
+        current_kw = self._extract_keywords(branch.content)
+
+        # Signal A: content length delta
+        cl_delta = min(abs(current_length - prior.content_length) / max(prior.content_length, 1), 1.0)
+
+        # Signal B: keyword Jaccard complement (new vocabulary fraction)
+        union = prior.keyword_set | current_kw
+        kn_delta = len(current_kw - prior.keyword_set) / len(union) if union else 0.0
+
+        # Signal C: sentence count delta (80-char estimate per sentence)
+        prior_sentences = max(1, prior.content_length // 80)
+        current_sentences = max(1, current_length // 80)
+        sn_delta = min(max((current_sentences - prior_sentences) / prior_sentences, 0.0), 1.0)
+
+        return (cl_delta + kn_delta + sn_delta) / 3.0
+
+    def _is_deepening(self, branch: Branch) -> bool:
+        """
+        True if the last DEPTH_VISIT_THRESHOLD visits all show genuine progress.
+        Monotropic flow: same attractor, consistently advancing.
+        """
+        if len(branch.visit_history) < DEPTH_VISIT_THRESHOLD:
+            return False
+        recent = branch.visit_history[-DEPTH_VISIT_THRESHOLD:]
+        return all(v.delta_score >= DEPTH_DELTA_FLOOR for v in recent)
+
+    def _promote_depth_attractor(self, branch: Branch) -> None:
+        """
+        Promote a deepening branch to the depth_attractor_signals list.
+        Idempotent: will not re-promote the same branch within the same cycle.
+        """
+        sig = branch.content[:80]
+        if any(s.branch_sig == sig for s in self.depth_attractor_signals):
+            return
+
+        signal = DepthAttractorSignal(
+            branch_sig=sig,
+            promoted_at=time.time(),
+            visit_count=len(branch.visit_history),
+            peak_delta=max((v.delta_score for v in branch.visit_history), default=0.0),
+            keyword_trajectory=[v.keyword_set for v in branch.visit_history],
+        )
+        self.depth_attractor_signals.append(signal)
+        branch.depth_promotions += 1
+
+    def clear_depth_signals(self, branch_sig: str | None = None) -> None:
+        """
+        Clear depth attractor signals for a specific branch (by content[:80] sig),
+        or clear all signals if branch_sig is None.
+        Called automatically at integrate() time.
+        """
+        if branch_sig is None:
+            self.depth_attractor_signals.clear()
+        else:
+            self.depth_attractor_signals = [
+                s for s in self.depth_attractor_signals if s.branch_sig != branch_sig
+            ]
+
+    # ── Synthesis weight formulas ─────────────────────────────────────────────
+
+    def synthesis_weight_mirror(self, branch: Branch) -> float:
+        """
+        MIRROR mode (ADHD-leaning) synthesis weight.
+
+        Rewards novelty + resonance. Novelty is the primary driver (escape vectors are
+        valuable; high-novelty/low-resonance branches are cognitive escape vectors that
+        haven't rhymed with anything yet because nothing like them exists).
+        Coherence is a soft floor at 0.3, not a gate — loose coherence is expected
+        in divergent mode. depth_pressure is intentionally absent (unresolved threads
+        ARE the expected shape of ADHD-mode working space).
+
+        Formula:
+            0.45 * novelty
+          + 0.30 * resonance
+          + 0.15 * sigmoid(coherence, threshold=0.3, slope=8)
+          - 0.10 * frame_saturation
+        """
+        s = branch.effective_score
+        coherence_floor = 1.0 / (1.0 + math.exp(-8.0 * (s.coherence - 0.3)))
+        weight = (
+            0.45 * s.novelty
+            + 0.30 * s.resonance
+            + 0.15 * coherence_floor
+            - 0.10 * s.frame_saturation
+        )
+        return max(0.0, weight)
+
+    def synthesis_weight_governor(self, branch: Branch) -> float:
+        """
+        GOVERNOR mode (ASD/monotropic-leaning) synthesis weight.
+
+        Coherence is primary (hard gate at 0.6). Novelty is gated by resonance:
+        novelty alone without echoing context is noise; novelty that rhymes with
+        existing work is valuable. Systematic frame coverage is rewarded.
+        depth_pressure is penalized — unresolved elaboration is cognitive overhead
+        in a precision-oriented mode.
+
+        Formula:
+            0.40 * sigmoid(coherence, threshold=0.6, slope=12)
+          + 0.25 * (novelty * resonance)      ← product enforces both nonzero
+          + 0.15 * frame_saturation
+          - 0.20 * depth_pressure
+        """
+        s = branch.effective_score
+        coherence_gate = 1.0 / (1.0 + math.exp(-12.0 * (s.coherence - 0.6)))
+        resonance_gated_novelty = s.novelty * s.resonance
+        weight = (
+            0.40 * coherence_gate
+            + 0.25 * resonance_gated_novelty
+            + 0.15 * s.frame_saturation
+            - 0.20 * s.depth_pressure
+        )
+        return max(0.0, weight)
 
     def synthesis_weight(self, branch: Branch) -> float:
         """
-        Priority weight for synthesis: novelty × sigmoid(coherence).
-        Used to order branches for the synthesis agent — high novelty + high
-        coherence surfaces first. Unscored branches receive neutral weight 1.0.
-        Does NOT prune — a weight of 0.1 still enters the synthesis pass.
+        Backward-compatible alias for synthesis_weight_mirror().
+        Existing callsites (frame_monoculture_risk, etc.) continue to work unchanged.
         """
-        if branch.score is None:
-            return 1.0
-        coherence_sigmoid = 1.0 / (1.0 + math.exp(-10.0 * (branch.score.coherence - 0.5)))
-        return branch.score.novelty * coherence_sigmoid
+        return self.synthesis_weight_mirror(branch)
 
     def frame_monoculture_risk(self, branches: list[Branch]) -> bool:
         """
@@ -277,11 +523,9 @@ class CouplingFunction:
         old_mode = self.mode
         self.mode = new_mode
         if new_mode == "human" and old_mode == "ai":
-            # Opening up: restore OPEN receptivity and high budget
             self._receptivity = ReceptivityState.OPEN
             self._interrupt_budget = max(self._interrupt_budget, self.base_interrupt_budget)
         elif new_mode == "ai" and old_mode == "human":
-            # Narrowing: move to NEUTRAL, synthesis can now drive
             if self._receptivity == ReceptivityState.OPEN:
                 self._receptivity = ReceptivityState.NEUTRAL
 
@@ -300,27 +544,51 @@ class CouplingFunction:
                 return True  # budget available but nothing being sent = capture
             return False
         else:
-            # Human-mode: premature convergence = human locking onto unexamined frame
+            # Human-mode: requires at least 2 completed segments before firing.
+            # On cycle 1 with no prior trajectory, locking onto a frame is not yet
+            # possible; surfacing all branches is correct behavior.
+            if self._trajectory_segments_completed < 2:
+                return False
             if recent_agreement_rate < 0.75:
                 return False
-            # High agreement AND low debt = human resolved without exploring alternatives
             debt = self.attractor_debt()
             total_debt = sum(debt.values())
             return total_debt < 1.0  # converged before accumulating meaningful attractors
 
     def overthinking_warning(self) -> bool:
         """
-        Human-mode only: fires when the same attractor hash keeps re-emerging
-        after nominal closure (re-emergence debt). Signals trajectory clutch:
-        force binary closure before resuming divergence.
+        Human-mode only. Distinguishes circular rumination from monotropic deepening.
 
-        Detects: branches that have been deferred 3+ times are still in queue,
-        indicating the human cannot close them — half-open integration loops.
+        CIRCULAR: same attractor, same content, no progress → warn.
+            Last 3 visits all have delta < CIRCULAR_DELTA_FLOOR (0.08).
+            If 2+ branches are circular → fires True.
+
+        DEEPENING (monotropic flow): same attractor, new content, advancing.
+            Last 2 visits both have delta >= DEPTH_DELTA_FLOOR (0.20).
+            Promotes to depth_attractor_signals (positive signal, not a warning).
+
+        The old implementation fired on deferred_count >= 3 alone, which made it
+        impossible to distinguish a human building depth from a human stuck in a loop.
+        Monotropism research (Murray/Lawson) is explicit: returning to the same channel
+        IS the mechanism for depth — not a pathology to interrupt.
         """
         if self.mode != "human":
             return False
-        chronic = [b for b in self._deferral_queue if b.deferred_count >= 3]
-        return len(chronic) >= 2  # two or more chronically un-closable attractors
+
+        circular_branches = []
+        for branch in self._deferral_queue:
+            if len(branch.visit_history) < CIRCULAR_VISIT_THRESHOLD:
+                continue  # not enough visits to evaluate yet
+            recent_deltas = [
+                v.delta_score
+                for v in branch.visit_history[-CIRCULAR_VISIT_THRESHOLD:]
+            ]
+            if all(d < CIRCULAR_DELTA_FLOOR for d in recent_deltas):
+                circular_branches.append(branch)
+            elif self._is_deepening(branch):
+                self._promote_depth_attractor(branch)
+
+        return len(circular_branches) >= CHRONIC_BRANCH_COUNT
 
     def _snapshot_trajectory(self) -> dict[str, Any]:
         return {

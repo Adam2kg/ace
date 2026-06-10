@@ -21,9 +21,10 @@ coupling history is lost.
 
 from __future__ import annotations
 
-import subprocess
 import time
 from dataclasses import dataclass, field
+
+import anthropic
 
 from ace.coupling.function import Branch, CouplingFunction, ReceptivityState
 
@@ -50,6 +51,8 @@ def synthesize(
     branches: list[Branch],
     coupling: CouplingFunction,
     trajectory_history: list[TrajectorySegment],
+    mode: str = "ai",
+    model: str = "claude-sonnet-4-6",
 ) -> SynthesisResult:
     """
     Run the synthesis agent (Claude) to integrate divergence branches into
@@ -57,6 +60,11 @@ def synthesize(
 
     The coupling function governs which branches are presented and tracks
     what gets deferred for attractor debt calculation.
+
+    mode="ai"    (Governor): compression function — integrate what's coherent, defer the rest.
+                 Parser default: DEFERRED. Branches must be explicitly integrated.
+    mode="human" (Mirror):   surface function — reflect tensions back to human, don't resolve.
+                 Parser default: INTEGRATED. Branches surface by default; only defer contradictions.
     """
     start = time.time()
 
@@ -78,9 +86,26 @@ def synthesize(
             for i, seg in enumerate(trajectory_history[-5:])
         )
 
-    prompt = f"""You are the synthesis agent in an ACE (Asymmetric Cognitive Equilibrium) session.
-Your role: compression function, not filter. Maintain trajectory. Integrate what's coherent.
-Defer what isn't — but record WHY, because deferred branches accumulate attractor debt.
+    if mode == "human":
+        role_instruction = (
+            "You are the synthesis agent in an ACE MIRROR session (human thinking scaffold).\n"
+            "Your role: surface and reflect — NOT compress or resolve.\n"
+            "The human is doing the thinking. Your job is to make the space visible, not to close it.\n\n"
+            "Instructions:\n"
+            "- Integrate ALL branches as live surfaces — present them as tensions or open questions\n"
+            "- DEFER only branches that directly contradict each other and cannot coexist as open questions\n"
+            "- TRAJECTORY_UPDATE: describe tensions, unexpected connections, and the core question raised.\n"
+            "  Do NOT recommend a direction. Do NOT resolve. Surface the thinking space for the human.\n"
+            "- CONVERGENCE_WARNING: YES if everything points to one answer (premature closure risk)"
+        )
+    else:
+        role_instruction = (
+            "You are the synthesis agent in an ACE (Asymmetric Cognitive Equilibrium) session.\n"
+            "Your role: compression function, not filter. Maintain trajectory. Integrate what's coherent.\n"
+            "Defer what isn't — but record WHY, because deferred branches accumulate attractor debt."
+        )
+
+    prompt = f"""{role_instruction}
 
 Topic: {topic}
 {trajectory_summary}
@@ -96,15 +121,21 @@ DEFERRED: <comma-separated branch numbers you are deferring, with brief reason e
 CONVERGENCE_WARNING: <YES if you notice you're agreeing with everything, NO otherwise>"""
 
     try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "text"],
-            capture_output=True, text=True, timeout=180,
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
         )
-        raw = result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        raw = ""
+        raw = message.content[0].text.strip()
+    except anthropic.AuthenticationError:
+        raw = "[synthesis-error] ANTHROPIC_API_KEY missing or invalid"
+    except anthropic.APIError as e:
+        raw = f"[synthesis-error] API error: {e}"
+    except Exception as e:
+        raw = f"[synthesis-error] {e}"
 
-    integrated, deferred = _parse_synthesis_response(raw, branches)
+    integrated, deferred = _parse_synthesis_response(raw, branches, mode=mode)
 
     for b in integrated:
         coupling.integrate(b)
@@ -117,9 +148,23 @@ CONVERGENCE_WARNING: <YES if you notice you're agreeing with everything, NO othe
     agreement_rate = len(integrated) / max(len(branches), 1)
     convergence_warn = coupling.convergence_warning(agreement_rate)
 
+    trajectory_update = _extract_section(raw, "TRAJECTORY_UPDATE")
+    if not trajectory_update:
+        if raw.startswith("[synthesis-error]"):
+            trajectory_update = raw  # surface the error
+        elif mode == "human":
+            # Mirror fallback: name the branches without framing them
+            trajectory_update = (
+                f"{len(integrated)} surfaces opened: "
+                + " | ".join(b.content[:60] for b in integrated[:3])
+                + (" | ..." if len(integrated) > 3 else "")
+            )
+        else:
+            trajectory_update = "(synthesis agent returned no update)"
+
     elapsed = time.time() - start
     return SynthesisResult(
-        trajectory_update=_extract_section(raw, "TRAJECTORY_UPDATE"),
+        trajectory_update=trajectory_update,
         integrated=integrated,
         deferred=deferred,
         high_debt_surfaced=[b.content for b in high_debt],
@@ -129,7 +174,7 @@ CONVERGENCE_WARNING: <YES if you notice you're agreeing with everything, NO othe
 
 
 def _parse_synthesis_response(
-    raw: str, branches: list[Branch]
+    raw: str, branches: list[Branch], mode: str = "ai",
 ) -> tuple[list[Branch], list[Branch]]:
     integrated_nums: set[int] = set()
     deferred_nums: set[int] = set()
@@ -142,8 +187,18 @@ def _parse_synthesis_response(
             nums = _extract_numbers(line)
             deferred_nums.update(nums)
 
-    integrated = [b for i, b in enumerate(branches, 1) if i in integrated_nums]
-    deferred = [b for i, b in enumerate(branches, 1) if i in deferred_nums or i not in integrated_nums]
+    if mode == "human":
+        # Mirror mode: default is INTEGRATED — surfaces appear by default.
+        # Only branches explicitly named in DEFERRED are held back.
+        explicitly_deferred = set(deferred_nums)
+        integrated = [b for i, b in enumerate(branches, 1) if i not in explicitly_deferred]
+        deferred = [b for i, b in enumerate(branches, 1) if i in explicitly_deferred]
+    else:
+        # Governor mode: default is DEFERRED — branches must earn integration.
+        # Anything not explicitly integrated stays in the deferral queue.
+        integrated = [b for i, b in enumerate(branches, 1) if i in integrated_nums]
+        deferred = [b for i, b in enumerate(branches, 1) if i in deferred_nums or i not in integrated_nums]
+
     return integrated, deferred
 
 
