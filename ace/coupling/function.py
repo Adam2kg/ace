@@ -172,11 +172,16 @@ class CouplingFunction:
         receptivity_noise_sigma: float = 0.15,
         debt_surface_threshold: float = 2.5,
         mode: str = "ai",
+        coherence_floor: float = 0.0,
     ):
         self.base_interrupt_budget = base_interrupt_budget
         self.budget_per_segment = budget_per_trajectory_segment
         self.receptivity_noise_sigma = receptivity_noise_sigma
         self.debt_surface_threshold = debt_surface_threshold
+        # Minimum branch coherence to survive into synthesis. 0.0 = off.
+        # Raised by grounded presets (Deep Focus) so low-coherence novelty can't
+        # crowd out actionable branches. See apply_coherence_floor().
+        self.coherence_floor = coherence_floor
         # Root mode: "ai" (Governor — entropy reduction) or "human" (Mirror — entropy production).
         # These are anti-correlated optimization targets; do NOT share a CouplingFunction
         # instance across modes in the same session.
@@ -485,12 +490,54 @@ class CouplingFunction:
         """
         return self.synthesis_weight_mirror(branch)
 
-    def frame_monoculture_risk(self, branches: list[Branch]) -> bool:
+    def apply_coherence_floor(
+        self, branches: list[Branch], floor: float | None = None
+    ) -> tuple[list[Branch], list[Branch]]:
+        """
+        Partition branches into (surviving, dropped) by a coherence floor.
+
+        A branch is dropped when it has a score and score.coherence < floor.
+        Branches without a score are always kept (can't judge them).
+        floor <= 0.0 disables the gate (nothing dropped).
+
+        Safety: never returns an empty surviving set when input is non-empty —
+        if every scored branch falls below the floor, the single most-coherent
+        branch is retained so synthesis always has something to work with.
+        """
+        floor = self.coherence_floor if floor is None else floor
+        if floor <= 0.0 or not branches:
+            return list(branches), []
+        surviving: list[Branch] = []
+        dropped: list[Branch] = []
+        for b in branches:
+            s = b.score
+            if s is not None and s.coherence < floor:
+                dropped.append(b)
+            else:
+                surviving.append(b)
+        if not surviving and dropped:
+            dropped.sort(
+                key=lambda b: (b.score.coherence if b.score else 0.0), reverse=True
+            )
+            surviving = [dropped.pop(0)]
+        return surviving, dropped
+
+    def frame_monoculture_risk(
+        self, branches: list[Branch], live_provider_count: int | None = None
+    ) -> bool:
         """
         True when > 80% of weighted branches share the same frame_id.
         Signals diversity failure: all divergence came from one cognitive angle.
         Caller should rotate frames rather than continuing.
+
+        When live_provider_count is given and < 2, returns False: with a single
+        live divergence provider the detector cannot distinguish genuine
+        cross-provider monoculture from one provider's own framing bias, so the
+        warning would be low-signal. Pass the number of providers that actually
+        returned branches this cycle.
         """
+        if live_provider_count is not None and live_provider_count < 2:
+            return False
         scored = [b for b in branches if b.score is not None and b.frame_id is not None]
         if len(scored) < 2:
             return False

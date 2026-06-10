@@ -77,11 +77,15 @@ _HUMAN_PRESET_RECOMMENDED = "human-adhd"
               help="Override base interrupt budget (preset default used if omitted)")
 @click.option("--debt-threshold", default=None, type=float,
               help="Override attractor debt surface threshold")
+@click.option("--coherence-floor", default=None, type=float,
+              help="Drop branches below this coherence (0.0–1.0) before synthesis. "
+                   "Use on grounded/engineering topics to suppress low-coherence noise.")
 def run(
     topic: str, cycles: int, providers: str, state_file: str | None,
     preset: str | None, mode: str | None, human_mode: bool,
     synthesis_strength: float | None, divergence_model: str | None,
     synthesis_model: str | None, budget: int | None, debt_threshold: float | None,
+    coherence_floor: float | None,
 ):
     """Run an ACE session on TOPIC."""
     provider_list = [p.strip() for p in providers.split(",")]
@@ -155,6 +159,7 @@ def run(
         synthesis_model=synthesis_model,
         budget=budget,
         debt_threshold=debt_threshold,
+        coherence_floor=coherence_floor,
     )
 
     frames_tag = "[cyan]frames-only[/cyan] " if profile.frames_only else ""
@@ -211,6 +216,7 @@ def run(
         receptivity_noise_sigma=profile.receptivity_noise_sigma,
         debt_surface_threshold=profile.debt_surface_threshold,
         mode=mode,
+        coherence_floor=profile.coherence_floor,
     )
     trajectory: list[TrajectorySegment] = []
 
@@ -226,6 +232,7 @@ def run(
             results = diverge(topic, provider_list, use_frames=not profile.frames_only)
 
         all_branches = []
+        live_providers = set()
         for r in results:
             indicator = "🔴" if r.provider == "codex" else "🟡"
             if not r.available:
@@ -240,13 +247,28 @@ def run(
                 trust_marker = " [red][low-trust][/red]" if b.low_trust_flag else ""
                 score_str = f" [dim]n={b.score.novelty:.2f} c={b.score.coherence:.2f}[/dim]" if b.score else ""
                 console.print(f"  •{trust_marker} {b.content}{score_str}")
+            if r.branches:
+                live_providers.add(r.provider)
             all_branches.extend(r.branches)
 
         if not all_branches:
             console.print("[red]No branches from any divergence provider. Check provider availability.[/red]")
             sys.exit(1)
 
-        if coupling.frame_monoculture_risk(all_branches):
+        # Coherence floor — drop low-coherence branches before synthesis (off when floor=0)
+        if profile.coherence_floor > 0.0:
+            all_branches, dropped = coupling.apply_coherence_floor(all_branches)
+            if dropped:
+                console.print(
+                    f"\n[dim]Coherence floor {profile.coherence_floor:.2f}: dropped "
+                    f"{len(dropped)} low-coherence branch(es) before synthesis.[/dim]"
+                )
+
+        # Frame monoculture — in multi-provider mode, suppress when < 2 providers
+        # contributed (can't tell single-source bias from structural monoculture).
+        # In frames-only mode diversity is frame-based, so don't gate on provider count.
+        monoculture_provider_count = None if profile.frames_only else len(live_providers)
+        if coupling.frame_monoculture_risk(all_branches, live_provider_count=monoculture_provider_count):
             console.print(
                 "\n[bold yellow]⚠ FRAME MONOCULTURE:[/bold yellow] > 80% of weighted branches "
                 "share the same cognitive frame. Frame rotation recommended before next cycle."

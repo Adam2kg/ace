@@ -77,6 +77,11 @@ class CouplingProfile:
     closure_pressure: float = 0.50
     urgency_gate: float = 0.50
     depth_delta_floor_override: float | None = None
+    # coherence_floor: [0.0–1.0] minimum branch coherence to survive into synthesis.
+    #                  0.0 = off (novelty unconstrained — correct for Explorer/scattered work).
+    #                  Raise for grounded/engineering topics where low-coherence "metaphor
+    #                  soup" drowns actionable branches. Deep Focus sets 0.70.
+    coherence_floor: float = 0.0
 
 
 PRESETS: dict[str, CouplingProfile] = {
@@ -247,6 +252,7 @@ PRESETS: dict[str, CouplingProfile] = {
         closure_pressure=0.65,        # gentle closure pressure — monotropic users spiral on precision
         urgency_gate=0.70,            # high — protect depth from false urgency
         depth_delta_floor_override=None,  # use default 0.20; monotropic deepening is verbose
+        coherence_floor=0.70,         # grounded depth mode — reject low-coherence metaphor soup
         description=(
             "Human thinking scaffold — ASD/monotropic attentional profile. "
             "Narrow-channel depth mode: AI preserves precision, protects focus, "
@@ -320,6 +326,7 @@ def apply_overrides(
     synthesis_model: str | None = None,
     budget: int | None = None,
     debt_threshold: float | None = None,
+    coherence_floor: float | None = None,
 ) -> CouplingProfile:
     """Apply explicit user overrides on top of a preset. Presets are defaults, not ceilings."""
     from dataclasses import replace
@@ -334,6 +341,8 @@ def apply_overrides(
         kwargs["base_interrupt_budget"] = budget
     if debt_threshold is not None:
         kwargs["debt_surface_threshold"] = debt_threshold
+    if coherence_floor is not None:
+        kwargs["coherence_floor"] = coherence_floor
     return replace(profile, **kwargs) if kwargs else profile
 
 

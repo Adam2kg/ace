@@ -18,3 +18,7 @@ ace = "ace.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ace"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

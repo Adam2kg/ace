@@ -165,8 +165,8 @@ Pick based on how you're thinking right now, not what you're thinking about.
 *Partially calibrated (1 live Mirror run). Budget/debt/resonance params unchanged.*
 *Known limitation: on **grounded engineering decisions** Explorer over-optimizes novelty —*
 *observed branches at novelty ~0.90 / coherence ~0.50 (metaphor-heavy, low actionability).*
-*Tuning decision: add a coherence floor (~0.70) for grounded/technical topics. See*
-*"Open tuning items" below. For now, prefer Deep Focus on concrete engineering tradeoffs.*
+*Explorer leaves the coherence floor off by design (novelty is the point). For grounded*
+*work use Deep Focus (floor 0.70) or pass `--coherence-floor 0.70`. See "Tuning items" (#4).*
 
 - Interrupt budget: 8 (short attention cycles; switching is natural)
 - Debt threshold: 2.0 (surface deferred branches fast, before WM decay)
@@ -222,10 +222,10 @@ High debt = trajectory is being warped by invisible pressure.
 Warning: *"Frame monoculture detected — all branches use [domain] framing.
 A perspective shift might reveal what this frame hides."*
 This is a structural warning, not a content warning.
-*Known limitation: with only one live divergence provider (e.g. codex quota-exhausted,*
-*gemini only), this fires on single-source bias rather than genuine cross-provider*
-*monoculture. Treat the warning as low-signal when fewer than 2 providers are live.*
-*Tuning decision: gate firing on ≥2 live providers. See "Open tuning items".*
+*Now gated on provider count: with fewer than 2 live divergence providers (e.g. codex*
+*quota-exhausted, gemini only) the warning is suppressed, since one provider's framing*
+*bias can't be distinguished from genuine cross-provider monoculture. Always active in*
+*frames-only mode, where diversity is frame-based. See "Tuning items — resolved" (#1).*
 
 **Depth attractor signal** (Mirror mode) — positive signal when a branch is genuinely
 deepening across visits (not just being re-visited). ACE promotes it, does not warn.
@@ -336,18 +336,17 @@ cd ~/ace && pip install -e .
 
 ---
 
-## Open tuning items
+## Tuning items — resolved
 
-Resolved from the first live Mirror calibration run (2 cycles, 360-editor decision).
-These are agreed code changes not yet implemented — tracked here so they aren't lost.
+Resolved from the first live Mirror calibration run (2 cycles, 360-editor decision),
+cross-checked against an external Gemini review.
 
 | # | Item | Verdict | Change | Status |
 |---|------|---------|--------|--------|
-| 1 | Frame-monoculture detector | TUNE | Gate firing on ≥2 live divergence providers; with one provider the signal conflates source bias with structural monoculture | **code TODO** in `frame_monoculture_risk` |
+| 1 | Frame-monoculture detector | TUNE | `frame_monoculture_risk(branches, live_provider_count)` returns False when < 2 providers contributed; CLI passes the live count (multi-provider mode only, not frames-only) | **done** + tests |
 | 2 | Synthesis focus menu | VALIDATED | Keep all four options — focused panels beat the full dump | done (no change) |
 | 3 | Overthinking warning | KEEP-PENDING | Needs a ≥4-cycle run with deliberate revisiting to test the 0.08 stagnation threshold | awaiting run |
-| 4 | Explorer coherence floor | TUNE | Add a coherence floor (~0.70) for grounded/engineering topics so novelty can't drown actionability | **code TODO** in scoring/preset |
+| 4 | Explorer coherence floor | TUNE | New `coherence_floor` profile field + `--coherence-floor` override + `apply_coherence_floor()`. Deep Focus sets 0.70; Explorer stays 0.0 (off). Drops sub-floor branches before synthesis, never empties the set | **done** + tests |
 
-**Blocker for the code TODOs:** there is no test suite for `ace/coupling/function.py`. Both
-behavioral changes (provider-gated monoculture, coherence floor) should land with unit tests
-rather than being tuned blind off a single run.
+Tests for items 1 and 4 live in `tests/test_coupling_tuning.py` (14 cases).
+Run them with `python3 -m pytest`.
