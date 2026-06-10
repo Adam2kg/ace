@@ -145,11 +145,11 @@ def _run_codex(topic: str, frame_id: str | None = None) -> DivergenceResult:
     try:
         result = subprocess.run(
             ["codex", "exec", "--skip-git-repo-check", "--full-auto", instruction],
-            capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
         )
         raw = result.stdout.strip()
         elapsed = time.time() - start
-        if _is_quota_error(raw):
+        if _is_quota_error(raw) or _is_quota_error(result.stderr or ""):
             return DivergenceResult("codex", [], raw, elapsed, available=False,
                                     error="quota_exceeded", frame_id=frame_id)
         branches = _parse_branches(raw, "codex", frame_id)
