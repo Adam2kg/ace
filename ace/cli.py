@@ -21,9 +21,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ace.agents.divergence import diverge
-from ace.agents.synthesis import TrajectorySegment, synthesize
+from ace.agents.synthesis import TrajectorySegment
 from ace.coupling.function import CouplingFunction
-from ace.presets import PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
+from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
 
 console = Console()
 
@@ -33,7 +33,7 @@ def main():
     pass
 
 
-_PRESET_LABELS = {
+_AI_PRESET_LABELS = {
     "architecture": "Architecture — Sonnet→Opus (synthesis-heavy, debate winner for creative work)",
     "debugging": "Debugging — Sonnet→Opus (follow hypothesis deep, low noise)",
     "design-review": "Design review — Haiku→Sonnet (fast variation, consistency tracking)",
@@ -41,7 +41,19 @@ _PRESET_LABELS = {
     "frames-deep": "Frames-deep — Sonnet→Sonnet, single provider (conceptual / budget-constrained / quota fallback)",
     "frames-adversarial": "Frames-adversarial — Sonnet→Opus, single provider (security / regulated / threat modeling)",
 }
-_PRESET_RECOMMENDED = "architecture"
+_HUMAN_PRESET_LABELS = {
+    "human-adhd": "Explorer — AI calibrates for wide divergence, loose closure, high noise tolerance",
+    "human-scientific": "Deep focus — AI calibrates for precision, low interruption, single-channel depth",
+    "human-creative": "Explorer (alias) — same as Explorer mode",
+}
+# Internal → display name for the session header
+_HUMAN_PRESET_DISPLAY = {
+    "human-adhd": "Explorer",
+    "human-scientific": "Deep Focus",
+    "human-creative": "Explorer",
+}
+_AI_PRESET_RECOMMENDED = "architecture"
+_HUMAN_PRESET_RECOMMENDED = "human-adhd"
 
 
 @main.command()
@@ -51,7 +63,10 @@ _PRESET_RECOMMENDED = "architecture"
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
 @click.option("--preset", default=None, type=click.Choice(list(PRESETS.keys())),
-              help="Coupling preset. Omit to get an interactive recommendation.")
+              help="Coupling preset (power-user: skips mode question, implies --mode a for ai presets).")
+@click.option("--mode", default=None, type=click.Choice(["h", "a", "human", "ai"]),
+              help="Root mode: h/human (I need to think) or a/ai (my AI needs to think). "
+                   "Omit to get the mode question.")
 @click.option("--human-mode", is_flag=True, default=False,
               help="Human is actively contributing divergence — AI divergence becomes amplifier")
 @click.option("--synthesis-strength", default=None, type=float,
@@ -62,39 +77,73 @@ _PRESET_RECOMMENDED = "architecture"
               help="Override base interrupt budget (preset default used if omitted)")
 @click.option("--debt-threshold", default=None, type=float,
               help="Override attractor debt surface threshold")
+@click.option("--coherence-floor", default=None, type=float,
+              help="Drop branches below this coherence (0.0–1.0) before synthesis. "
+                   "Use on grounded/engineering topics to suppress low-coherence noise.")
 def run(
     topic: str, cycles: int, providers: str, state_file: str | None,
-    preset: str | None, human_mode: bool,
+    preset: str | None, mode: str | None, human_mode: bool,
     synthesis_strength: float | None, divergence_model: str | None,
     synthesis_model: str | None, budget: int | None, debt_threshold: float | None,
+    coherence_floor: float | None,
 ):
     """Run an ACE session on TOPIC."""
     provider_list = [p.strip() for p in providers.split(",")]
 
-    # Interactive preset selection when not given explicitly
-    if preset is None:
-        console.print("\n[bold cyan]ACE — Select coupling preset[/bold cyan]")
-        console.print("[dim]Recommendations from 3-round multi-provider debate:[/dim]\n")
-        choices = list(PRESETS.keys())
-        for i, key in enumerate(choices, 1):
-            rec = " [green](recommended — debate winner)[/green]" if key == _PRESET_RECOMMENDED else ""
-            console.print(f"  [{i}] {_PRESET_LABELS[key]}{rec}")
-        console.print()
-        raw = click.prompt(
-            "Preset",
-            default="1",
-            show_default=True,
-        ).strip()
-        # Accept number or name
-        if raw.isdigit() and 1 <= int(raw) <= len(choices):
-            preset = choices[int(raw) - 1]
-        elif raw in choices:
-            preset = raw
-        else:
-            console.print(f"[red]Unknown selection '{raw}', defaulting to {_PRESET_RECOMMENDED}[/red]")
-            preset = _PRESET_RECOMMENDED
+    # Normalize mode flag
+    if mode in ("h", "human"):
+        mode = "human"
+    elif mode in ("a", "ai"):
+        mode = "ai"
 
-        if not human_mode:
+    # --preset implies ai-mode for all existing ai presets; human presets set mode automatically
+    if preset is not None and mode is None:
+        preset_obj = PRESETS.get(preset)
+        if preset_obj:
+            mode = preset_obj.mode  # read from preset definition
+
+    # Root mode declaration — one question, not skippable unless --mode or --preset given
+    if mode is None:
+        console.print("\n[bold cyan]ACE — How would you like to think?[/bold cyan]\n")
+        console.print("  [H] I need to think through something   [dim](human-mode: Mirror)[/dim]")
+        console.print("  [A] My AI needs to think through this   [dim](ai-mode: Governor)[/dim]")
+        console.print()
+        raw = click.prompt("Mode", default="H").strip().upper()
+        mode = "human" if raw in ("H", "HUMAN", "") else "ai"
+
+    # Select preset — human-mode picks from human presets, ai-mode from ai presets
+    if preset is None:
+        if mode == "human":
+            console.print("\n[bold cyan]ACE — Task type[/bold cyan]\n")
+            h_choices = list(_HUMAN_PRESET_LABELS.keys())
+            for i, key in enumerate(h_choices, 1):
+                rec = " [green](recommended)[/green]" if key == _HUMAN_PRESET_RECOMMENDED else ""
+                console.print(f"  [{i}] {_HUMAN_PRESET_LABELS[key]}{rec}")
+            console.print()
+            raw = click.prompt("Type", default="1", show_default=True).strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(h_choices):
+                preset = h_choices[int(raw) - 1]
+            elif raw in h_choices:
+                preset = raw
+            else:
+                preset = DEFAULT_HUMAN_PRESET
+        else:
+            console.print("\n[bold cyan]ACE — Select coupling preset[/bold cyan]")
+            console.print("[dim]Recommendations from 3-round multi-provider debate:[/dim]\n")
+            choices = list(_AI_PRESET_LABELS.keys())
+            for i, key in enumerate(choices, 1):
+                rec = " [green](recommended — debate winner)[/green]" if key == _AI_PRESET_RECOMMENDED else ""
+                console.print(f"  [{i}] {_AI_PRESET_LABELS[key]}{rec}")
+            console.print()
+            raw = click.prompt("Preset", default="1", show_default=True).strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(choices):
+                preset = choices[int(raw) - 1]
+            elif raw in choices:
+                preset = raw
+            else:
+                preset = _AI_PRESET_RECOMMENDED
+
+        if mode == "ai" and not human_mode:
             human_mode = click.confirm(
                 "Are you actively contributing ideas? (human-mode: AI divergence becomes amplifier)",
                 default=False,
@@ -110,10 +159,21 @@ def run(
         synthesis_model=synthesis_model,
         budget=budget,
         debt_threshold=debt_threshold,
+        coherence_floor=coherence_floor,
     )
 
     frames_tag = "[cyan]frames-only[/cyan] " if profile.frames_only else ""
     mode_tag = "[magenta]human-mode[/magenta] " if human_mode else ""
+    root_mode_label = (
+        "[bold green]MIRROR[/bold green] [dim](human thinking scaffold)[/dim]"
+        if mode == "human" else
+        "[bold blue]GOVERNOR[/bold blue] [dim](AI thinking scaffold)[/dim]"
+    )
+    # Display label: for human presets show calibration style, not internal name
+    preset_display = (
+        _HUMAN_PRESET_DISPLAY.get(preset, preset)
+        if mode == "human" else preset
+    )
     divergence_line = (
         f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
         f"(frames-{profile.frames_set})"
@@ -123,17 +183,24 @@ def run(
     )
     console.print(Panel(
         f"[bold cyan]ACE — Asymmetric Cognitive Equilibrium[/bold cyan]\n"
+        f"[dim]Mode:[/dim] {root_mode_label}\n"
         f"[dim]Topic:[/dim] {topic}\n"
-        f"[dim]Preset:[/dim] [green]{preset}[/green] {frames_tag}{mode_tag}\n"
+        f"[dim]Calibration:[/dim] [green]{preset_display}[/green] {frames_tag}{mode_tag}\n"
         f"{divergence_line}\n"
         f"[dim]Synthesis:[/dim] [blue]{profile.synthesis_model}[/blue] "
         f"(strength {profile.synthesis_strength}/5{'↗' if profile.dynamic_cq else ''})\n"
         f"[dim]Cycles:[/dim] {cycles} | "
         f"[dim]Debt threshold:[/dim] {profile.debt_surface_threshold} | "
         f"[dim]Budget:[/dim] {profile.base_interrupt_budget}",
-        border_style="cyan",
+        border_style="cyan" if mode == "ai" else "green",
     ))
-    if human_mode:
+    if mode == "human":
+        console.print(
+            "[bold green]Mirror mode:[/bold green] AI surfaces branches for you to sit with — "
+            "not to resolve. After each cycle, paste the synthesis prompt into Claude Code, "
+            "read what surfaces, then run the next cycle."
+        )
+    if human_mode and mode == "ai":
         console.print(
             "[magenta]Human mode:[/magenta] You are the primary divergence engine. "
             "AI divergence amplifies and finds edge cases. Convergence warnings suppressed."
@@ -148,6 +215,8 @@ def run(
         base_interrupt_budget=profile.base_interrupt_budget,
         receptivity_noise_sigma=profile.receptivity_noise_sigma,
         debt_surface_threshold=profile.debt_surface_threshold,
+        mode=mode,
+        coherence_floor=profile.coherence_floor,
     )
     trajectory: list[TrajectorySegment] = []
 
@@ -163,6 +232,7 @@ def run(
             results = diverge(topic, provider_list, use_frames=not profile.frames_only)
 
         all_branches = []
+        live_providers = set()
         for r in results:
             indicator = "🔴" if r.provider == "codex" else "🟡"
             if not r.available:
@@ -177,49 +247,150 @@ def run(
                 trust_marker = " [red][low-trust][/red]" if b.low_trust_flag else ""
                 score_str = f" [dim]n={b.score.novelty:.2f} c={b.score.coherence:.2f}[/dim]" if b.score else ""
                 console.print(f"  •{trust_marker} {b.content}{score_str}")
+            if r.branches:
+                live_providers.add(r.provider)
             all_branches.extend(r.branches)
 
         if not all_branches:
             console.print("[red]No branches from any divergence provider. Check provider availability.[/red]")
             sys.exit(1)
 
-        if coupling.frame_monoculture_risk(all_branches):
+        # Coherence floor — drop low-coherence branches before synthesis (off when floor=0)
+        if profile.coherence_floor > 0.0:
+            all_branches, dropped = coupling.apply_coherence_floor(all_branches)
+            if dropped:
+                console.print(
+                    f"\n[dim]Coherence floor {profile.coherence_floor:.2f}: dropped "
+                    f"{len(dropped)} low-coherence branch(es) before synthesis.[/dim]"
+                )
+
+        # Frame monoculture — in multi-provider mode, suppress when < 2 providers
+        # contributed (can't tell single-source bias from structural monoculture).
+        # In frames-only mode diversity is frame-based, so don't gate on provider count.
+        monoculture_provider_count = None if profile.frames_only else len(live_providers)
+        if coupling.frame_monoculture_risk(all_branches, live_provider_count=monoculture_provider_count):
             console.print(
                 "\n[bold yellow]⚠ FRAME MONOCULTURE:[/bold yellow] > 80% of weighted branches "
                 "share the same cognitive frame. Frame rotation recommended before next cycle."
             )
 
-        console.rule(f"[blue]Cycle {cycle_n}/{cycles} — Synthesize[/blue]")
+        if coupling.overthinking_warning():
+            console.print(
+                "\n[bold yellow]⚠ OVERTHINKING DETECTED:[/bold yellow] Same attractors "
+                "returning after nominal closure (re-emergence debt). "
+                "Forcing binary closure — commit or explicitly discard before continuing."
+            )
 
+        # Track all branches in coupling state (mark as surfaced for debt tracking)
+        for b in all_branches:
+            coupling.integrate(b)
+        coupling.on_trajectory_segment_complete()
+
+        # Build branch context (shared across all synthesis tasks)
+        branch_lines = "\n".join(
+            f"[{i+1}] {b.content}" for i, b in enumerate(all_branches)
+        )
         debt = coupling.attractor_debt()
+        debt_note = ""
         if debt:
-            debt_table = Table(title="Attractor Debt", show_header=True, header_style="bold magenta")
-            debt_table.add_column("Branch", style="dim")
-            debt_table.add_column("Debt Score", justify="right")
-            for sig, score in list(debt.items())[:5]:
-                debt_table.add_row(sig[:60], f"{score:.2f}")
-            console.print(debt_table)
+            top = list(debt.items())[:3]
+            debt_note = "\nATTRACTOR DEBT (branches with high gravitational pull):\n" + "\n".join(
+                f"  ↑ {sig[:60]} (debt={score:.2f})" for sig, score in top
+            )
 
-        with console.status("[blue]🔵 Synthesis agent processing...[/blue]"):
-            result = synthesize(topic, all_branches, coupling, trajectory)
+        # Synthesis task menu — user picks a focus; panel is built for that one task only
+        console.rule(f"[blue]Cycle {cycle_n}/{cycles} — Synthesis[/blue]")
 
-        console.print(f"\n[bold blue]🔵 Trajectory Update:[/bold blue] {result.trajectory_update}")
-        console.print(f"[green]✓ Integrated ({len(result.integrated)}):[/green] {', '.join(b.content[:50] for b in result.integrated)}")
-        console.print(f"[yellow]⏸ Deferred ({len(result.deferred)}):[/yellow] {', '.join(b.content[:50] for b in result.deferred)}")
+        if mode == "human":
+            synthesis_menu = [
+                (
+                    "Tensions",
+                    "Surface tensions and unexpected connections",
+                    "What are the tensions and unexpected connections between these branches?\n"
+                    "Do NOT resolve or recommend a direction — surface only.",
+                ),
+                (
+                    "Hidden question",
+                    "Find the question none of these branches raises alone",
+                    "What single question do all these branches raise together "
+                    "that none of them raises alone?",
+                ),
+                (
+                    "Uncomfortable branch",
+                    "Which branch is most uncomfortable to hold open — and why?",
+                    "Which of these branches feels most uncomfortable to leave unresolved? "
+                    "Name it and explain why that discomfort is the important signal.",
+                ),
+                (
+                    "Full Mirror",
+                    "All of the above (full Mirror synthesis)",
+                    "Surface the tensions and unexpected connections between these branches.\n"
+                    "Find the question none of them raises alone.\n"
+                    "Name the branch most uncomfortable to hold open and why that discomfort matters.\n"
+                    "Do NOT resolve or recommend a direction.",
+                ),
+            ]
+        else:
+            synthesis_menu = [
+                (
+                    "Trajectory update",
+                    "Where does the trajectory now point? What shifted?",
+                    "Given these branches, where does the trajectory now point? "
+                    "What shifted since the last cycle?",
+                ),
+                (
+                    "Load-bearing vs noise",
+                    "Which branches are load-bearing and which are noise?",
+                    "Which of these branches are load-bearing for the trajectory? "
+                    "Which are noise or tangents? Justify each.",
+                ),
+                (
+                    "Next step",
+                    "What is the next concrete, falsifiable step?",
+                    "What is the next concrete, testable step this trajectory points toward? "
+                    "State it as a falsifiable claim.",
+                ),
+                (
+                    "Full Governor",
+                    "Full Governor synthesis (integrate, rank, next step)",
+                    "Integrate what's coherent into a trajectory update.\n"
+                    "Identify which branches are load-bearing vs noise.\n"
+                    "State the next falsifiable step this trajectory points toward.",
+                ),
+            ]
 
-        if result.high_debt_surfaced:
-            console.print(f"\n[magenta]⚡ Attractor debt surfaced:[/magenta]")
-            for s in result.high_debt_surfaced:
-                console.print(f"  ↑ {s[:80]}")
+        console.print("\n[bold]Synthesis focus:[/bold]")
+        for i, (label, heading, _) in enumerate(synthesis_menu, 1):
+            rec = " [dim](default)[/dim]" if i == len(synthesis_menu) else ""
+            console.print(f"  [[cyan]{i}[/cyan]] [bold]{label}[/bold] — {heading}{rec}")
+        console.print()
 
-        if result.convergence_warning and profile.convergence_warning_enabled:
-            console.print("\n[bold red]⚠ CONVERGENCE WARNING:[/bold red] High agreement rate detected. "
-                         "The divergence agent may be captured by the synthesis agent's frame. "
-                         "Consider increasing noise or switching divergence providers.")
+        raw_choice = click.prompt(
+            "Focus", default=str(len(synthesis_menu)), show_default=True
+        ).strip()
+        if raw_choice.isdigit() and 1 <= int(raw_choice) <= len(synthesis_menu):
+            chosen_label, chosen_heading, chosen_instruction = synthesis_menu[int(raw_choice) - 1]
+        else:
+            chosen_label, chosen_heading, chosen_instruction = synthesis_menu[-1]
+
+        synthesis_prompt = (
+            f"ACE {'MIRROR' if mode == 'human' else 'GOVERNOR'} SESSION — {topic}\n"
+            f"Calibration: {preset_display} | Cycle {cycle_n}/{cycles} | Focus: {chosen_label}\n\n"
+            f"{len(all_branches)} branches:\n\n"
+            f"{branch_lines}\n"
+            f"{debt_note}\n\n"
+            f"{chosen_instruction}"
+        )
+
+        console.print(Panel(
+            synthesis_prompt,
+            title=f"[bold blue]🔵 Paste into Claude Code — {chosen_heading}[/bold blue]",
+            border_style="blue",
+        ))
 
         trajectory.append(TrajectorySegment(
-            content=result.trajectory_update,
-            integrated_branches=[b.content for b in result.integrated],
+            content=f"Cycle {cycle_n}: {len(all_branches)} branches surfaced",
+            integrated_branches=[b.content for b in all_branches],
         ))
 
     # Final state
@@ -237,6 +408,36 @@ def run(
     console.print("\n[bold]Final Trajectory:[/bold]")
     for i, seg in enumerate(trajectory, 1):
         console.print(f"  [{i}] {seg.content}")
+
+    # Next-step guidance
+    if mode == "human":
+        depth_attractors = state.get("depth_attractors", [])
+        next_cycle_cmd = (
+            f"ace run \"{topic}\" --cycles 1 --preset {preset} --mode h"
+        )
+        console.print()
+        console.print(Panel(
+            "[bold green]What to do now:[/bold green]\n\n"
+            "  1. Paste the synthesis prompt above into this Claude Code conversation\n"
+            "  2. Read what surfaces — tensions, unexpected connections, the uncomfortable branch\n"
+            "  3. Sit with it. Do not rush to resolve.\n"
+            "  4. When something sharpens, run another cycle:\n\n"
+            f"     [cyan]{next_cycle_cmd}[/cyan]\n\n"
+            + (
+                f"  [dim]Depth attractors active ({len(depth_attractors)}): "
+                f"{', '.join(s['sig'][:40] for s in depth_attractors[:2])}[/dim]\n"
+                if depth_attractors else ""
+            ) +
+            "  [dim]The synthesis is a question generator, not an answer. "
+            "The loop closes when you decide — not when the system does.[/dim]",
+            border_style="green",
+            title="[bold green]↓ Next Step[/bold green]",
+        ))
+    else:
+        console.print(
+            "\n[dim]Governor mode: paste the synthesis prompt into Claude Code "
+            "to integrate branches into trajectory.[/dim]"
+        )
 
 
 @main.command()
@@ -268,3 +469,7 @@ def debt(state_file: str):
         console.print("\n[magenta]High-debt branches needing re-examination:[/magenta]")
         for b in state["high_debt_branches"]:
             console.print(f"  ↑ {b[:100]}")
+
+
+if __name__ == "__main__":
+    main()
