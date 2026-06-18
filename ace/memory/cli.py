@@ -8,7 +8,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from .harvester import harvest
+from .harvester import OllamaUnavailable, harvest
 from .store import memory_dir, memory_index, project_slug
 
 console = Console()
@@ -21,6 +21,27 @@ def _latest_jsonl(cwd: Path) -> Path | None:
     return jsonls[0] if jsonls else None
 
 
+def _render(memories: list[dict]) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Type", style="cyan", width=12)
+    table.add_column("Name", style="bold", width=32)
+    table.add_column("Description")
+    for m in memories:
+        suffix = " [dim](skipped — exists)[/dim]" if m.get("_skipped") else ""
+        table.add_row(m.get("type", "?"), m.get("name", "?"), m.get("description", "") + suffix)
+    console.print(table)
+
+
+backend_option = click.option(
+    "--backend",
+    type=click.Choice(["ollama", "haiku"]),
+    default="ollama",
+    show_default=True,
+    help="ollama = local & keyless; haiku = Anthropic API (costs money, sends transcript to Anthropic)",
+)
+model_option = click.option("--model", "-m", default=None, help="Override the model for the chosen backend")
+
+
 @click.group("memory")
 def memory_group():
     """Personal memory engine — harvest session memories and inspect the store."""
@@ -30,8 +51,10 @@ def memory_group():
 @memory_group.command("harvest")
 @click.option("--session", "-s", type=click.Path(exists=True), help="Path to session JSONL (default: latest)")
 @click.option("--cwd", "-C", default=".", show_default=True, help="Project directory")
+@backend_option
+@model_option
 @click.option("--dry-run", is_flag=True, help="Show what would be written, don't write")
-def cmd_harvest(session, cwd, dry_run):
+def cmd_harvest(session, cwd, backend, model, dry_run):
     """Extract memories from the latest (or a specific) session transcript."""
     cwd = Path(cwd).resolve()
 
@@ -44,24 +67,20 @@ def cmd_harvest(session, cwd, dry_run):
             sys.exit(1)
         console.print(f"Latest session: [dim]{jsonl.name}[/dim]")
 
-    console.print(f"Harvesting [cyan]{jsonl.name}[/cyan] …")
+    console.print(f"Harvesting [cyan]{jsonl.name}[/cyan] via [magenta]{backend}[/magenta] …")
 
-    memories = harvest(jsonl, cwd, dry_run=dry_run)
+    try:
+        memories = harvest(jsonl, cwd, backend=backend, model=model, dry_run=dry_run)
+    except OllamaUnavailable as e:
+        console.print(f"[red]{e}[/red]")
+        console.print("[dim]Tip: run `ollama serve` in another terminal, or use --backend haiku.[/dim]")
+        sys.exit(1)
 
     if not memories:
         console.print("[dim]Nothing worth keeping extracted.[/dim]")
         return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Type", style="cyan", width=12)
-    table.add_column("Name", style="bold", width=32)
-    table.add_column("Description")
-
-    for m in memories:
-        suffix = " [dim](skipped — exists)[/dim]" if m.get("_skipped") else ""
-        table.add_row(m.get("type", "?"), m.get("name", "?"), m.get("description", "") + suffix)
-
-    console.print(table)
+    _render(memories)
 
     if dry_run:
         console.print("[yellow]Dry run — nothing written.[/yellow]")
@@ -74,8 +93,10 @@ def cmd_harvest(session, cwd, dry_run):
 @memory_group.command("backfill")
 @click.option("--cwd", "-C", default=".", show_default=True, help="Project directory")
 @click.option("--limit", "-n", default=5, show_default=True, help="Max sessions to process")
+@backend_option
+@model_option
 @click.option("--dry-run", is_flag=True)
-def cmd_backfill(cwd, limit, dry_run):
+def cmd_backfill(cwd, limit, backend, model, dry_run):
     """Harvest memories from the N most recent past sessions."""
     cwd = Path(cwd).resolve()
     slug = project_slug(cwd)
@@ -89,7 +110,12 @@ def cmd_backfill(cwd, limit, dry_run):
     total_new = 0
     for jsonl in jsonls[:limit]:
         console.print(f"[dim]{jsonl.name}[/dim] …")
-        memories = harvest(jsonl, cwd, dry_run=dry_run)
+        try:
+            memories = harvest(jsonl, cwd, backend=backend, model=model, dry_run=dry_run)
+        except OllamaUnavailable as e:
+            console.print(f"[red]{e}[/red]")
+            console.print("[dim]Tip: run `ollama serve`, or use --backend haiku.[/dim]")
+            sys.exit(1)
         new = [m for m in memories if not m.get("_skipped")]
         total_new += len(new)
         for m in new:

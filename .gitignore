@@ -13,6 +13,9 @@ venv/
 .claude/
 .octo/
 .octo-continue.md
+
+# errwatch generated findings (config errwatch.toml is tracked)
+.errwatch/
 trajectory_log.json
 attractor_state.json
 relational_context.json

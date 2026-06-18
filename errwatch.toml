@@ -1,0 +1,39 @@
+# errwatch config for the ACE repo (Asymmetric Cognitive Equilibrium Engine).
+# Python project — lints the ace/ package (incl. the new ace/memory/ engine)
+# and tests under tests/.
+
+[watch]
+paths = ["."]
+ignore = [
+    ".git", "__pycache__", "*.pyc", ".venv", "node_modules",
+    "dist", "build", ".octo", ".ruff_cache",
+]
+debounce_ms = 150
+
+[notify]
+bell = true
+title = true
+notification = false   # macOS banner off (osascript attributes it to Script Editor)
+
+[export]
+auto = true            # keep .errwatch/findings-latest.md current for /errwatch findings
+
+[jobs.lint]
+command = ["ruff", "check", "--output-format", "json", "ace"]
+analyzer = "json"
+file_key = "filename"
+line_key = "location.row"
+column_key = "location.column"
+message_key = "message"
+default = true
+key = "l"
+
+[jobs.compile]
+command = ["python", "-c", "import compileall, sys; sys.exit(0 if compileall.compile_dir('ace', quiet=1, force=True) else 1)"]
+analyzer = "exit_code"
+key = "c"
+
+[jobs.test]
+command = ["python", "-m", "pytest", "-q", "--no-header"]
+analyzer = "exit_code"
+key = "t"

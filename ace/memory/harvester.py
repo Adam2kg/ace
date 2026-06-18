@@ -1,16 +1,26 @@
 """
-Reads a Claude Code session JSONL, calls Claude Haiku to extract memory-worthy facts,
+Reads a Claude Code session JSONL, asks an LLM to extract memory-worthy facts,
 and writes them into the project's memory/ directory.
+
+Two backends:
+  - "ollama" (default): fully local, keyless. Nothing leaves the machine.
+  - "haiku": Claude Haiku via the Anthropic API. Higher quality, costs ~a fraction
+    of a cent per session, and sends the transcript to Anthropic. Requires
+    ANTHROPIC_API_KEY.
 """
 from __future__ import annotations
 
 import json
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 
-import anthropic
-
 from .store import known_names, write_memory
+
+OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
+DEFAULT_HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM = """\
 You extract durable memory facts from AI coding assistant session transcripts.
@@ -31,6 +41,10 @@ Rules:
 - name: unique kebab-slug, max 40 chars, no spaces
 - If nothing is worth keeping, return {"memories": []}\
 """
+
+
+class OllamaUnavailable(RuntimeError):
+    """Raised when the local Ollama server can't be reached."""
 
 
 def _extract_turns(jsonl_path: Path, max_chars: int = 50_000) -> str:
@@ -68,11 +82,13 @@ def _extract_turns(jsonl_path: Path, max_chars: int = 50_000) -> str:
 
 def _parse_memories(raw: str) -> list[dict]:
     raw = raw.strip()
+    # Strip <think>...</think> blocks that some local models emit
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     try:
         return json.loads(raw).get("memories", [])
     except json.JSONDecodeError:
         pass
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
             return json.loads(match.group()).get("memories", [])
@@ -81,32 +97,87 @@ def _parse_memories(raw: str) -> list[dict]:
     return []
 
 
+def _ollama_running() -> bool:
+    try:
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")
+        with urllib.request.urlopen(req, timeout=3):
+            return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def _call_ollama(system: str, user: str, model: str) -> str:
+    """Call a local Ollama model with JSON-constrained output."""
+    if not _ollama_running():
+        raise OllamaUnavailable(
+            "Ollama server is not reachable at localhost:11434. Start it with `ollama serve`."
+        )
+
+    payload = json.dumps({
+        "model": model,
+        "format": "json",  # constrain output to valid JSON
+        "stream": False,
+        "options": {"temperature": 0.2},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    # Local 7B model on a long transcript — give it room.
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return body.get("message", {}).get("content", "")
+
+
+def _call_haiku(system: str, user: str, model: str) -> str:
+    """Call Claude Haiku via the Anthropic API. Imports anthropic lazily."""
+    import anthropic  # noqa: PLC0415 — optional dependency, only needed for this backend
+
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=model,
+        max_tokens=2048,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return resp.content[0].text
+
+
 def harvest(
     jsonl_path: Path,
     cwd: str | Path,
     *,
+    backend: str = "ollama",
+    model: str | None = None,
     dry_run: bool = False,
-    model: str = "claude-haiku-4-5-20251001",
 ) -> list[dict]:
     """
     Extract memories from jsonl_path and write them to the memory store for cwd.
     Returns the list of memories (written or would-be-written).
+
+    backend: "ollama" (local, keyless) or "haiku" (Anthropic API).
     """
     transcript = _extract_turns(jsonl_path)
     if not transcript.strip():
         return []
 
     existing = known_names(cwd)
+    user_prompt = f"Extract memories:\n\n{transcript}"
 
-    client = anthropic.Anthropic()
-    resp = client.messages.create(
-        model=model,
-        max_tokens=2048,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": f"Extract memories:\n\n{transcript}"}],
-    )
+    if backend == "ollama":
+        raw = _call_ollama(_SYSTEM, user_prompt, model or DEFAULT_OLLAMA_MODEL)
+    elif backend == "haiku":
+        raw = _call_haiku(_SYSTEM, user_prompt, model or DEFAULT_HAIKU_MODEL)
+    else:
+        raise ValueError(f"Unknown backend: {backend!r} (expected 'ollama' or 'haiku')")
 
-    memories = _parse_memories(resp.content[0].text)
+    memories = _parse_memories(raw)
 
     written: list[dict] = []
     for m in memories:
