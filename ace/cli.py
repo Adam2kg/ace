@@ -23,7 +23,7 @@ from rich.table import Table
 from ace.agents.divergence import diverge
 from ace.agents.synthesis import TrajectorySegment
 from ace.coupling.function import CouplingFunction
-from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
+from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, get_preset
 
 console = Console()
 
