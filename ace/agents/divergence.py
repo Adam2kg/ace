@@ -15,6 +15,8 @@ the synthesis agent from converging to local minima. Do not optimize them away.
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -185,6 +187,54 @@ def _run_gemini(topic: str, frame_id: str | None = None) -> DivergenceResult:
                                 available=False, error=str(e), frame_id=frame_id)
 
 
+def _ollama_model() -> str:
+    """First locally-installed Ollama model, or the configured override."""
+    env = os.environ.get("ACE_OLLAMA_MODEL") or os.environ.get("OCTOPUS_OLLAMA_MODEL")
+    if env:
+        return env
+    try:
+        out = subprocess.run(
+            ["ollama", "list"], capture_output=True, text=True, timeout=10,
+        ).stdout.splitlines()
+        if len(out) > 1:
+            return out[1].split()[0]
+    except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
+        pass
+    return "qwen2.5-coder:7b"
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][0-9A-Za-z]|[\x00-\x08\x0b-\x1f]")
+
+
+def _run_ollama(topic: str, frame_id: str | None = None) -> DivergenceResult:
+    """Local divergence runner — zero external dependency, no API cost.
+
+    The branch-source-as-commodity path: the coupling function is the IP, the
+    branch generator is fungible. Use this when external providers are down or
+    when a session should stay fully local.
+    """
+    start = time.time()
+    instruction = _build_framed_prompt(
+        topic, frame_id,
+        "Output: numbered list of distinct branches (ideas, approaches, angles). "
+        "Each branch: one sentence label + one sentence rationale. "
+        "Minimum 4 branches. Prioritize specificity over generality. "
+        "Push past the obvious — the first 3 ideas you'd think of are banned.",
+    )
+    try:
+        result = subprocess.run(
+            ["ollama", "run", _ollama_model()],
+            input=instruction, capture_output=True, text=True, timeout=240,
+        )
+        raw = _ANSI_RE.sub("", result.stdout).strip()
+        elapsed = time.time() - start
+        branches = _parse_branches(raw, "ollama", frame_id)
+        return DivergenceResult("ollama", branches, raw, elapsed, frame_id=frame_id)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return DivergenceResult("ollama", [], "", time.time() - start,
+                                available=False, error=str(e), frame_id=frame_id)
+
+
 def _is_quota_error(text: str) -> bool:
     low = text.lower()
     return any(p in low for p in (
@@ -286,7 +336,7 @@ def diverge(
     Returns all results including failures so the coupling function can account
     for missing provider perspectives.
     """
-    runners: dict[str, object] = {"codex": _run_codex, "gemini": _run_gemini}
+    runners: dict[str, object] = {"codex": _run_codex, "gemini": _run_gemini, "ollama": _run_ollama}
     active = [p for p in (providers or list(runners.keys())) if p in runners]
 
     # Assign frames before dispatch so each provider gets a distinct one
