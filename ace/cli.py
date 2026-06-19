@@ -23,6 +23,7 @@ from rich.table import Table
 from ace.agents.divergence import diverge
 from ace.agents.synthesis import TrajectorySegment
 from ace.coupling.function import CouplingFunction
+from ace.coupling.routing import recommend_routing
 from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, get_preset
 
 console = Console()
@@ -281,6 +282,24 @@ def run(
                 "Forcing binary closure — commit or explicitly discard before continuing."
             )
 
+        # Coupling-function-as-control-plane: recommend synthesis model + divergence
+        # strategy from the branch signals (no extra LLM call). See coupling/routing.py.
+        routing = recommend_routing(all_branches)
+        _model_label = {"opus": "Opus-class (holistic)", "sonnet": "Sonnet/Haiku-class (convergent)"}
+        console.print(
+            f"\n[bold cyan]⇄ ROUTING[/bold cyan] — regime: [bold]{routing.regime}[/bold] | "
+            f"recommend [bold]{_model_label.get(routing.synthesis_model, routing.synthesis_model)}[/bold] "
+            f"synthesis\n  [dim]survival={routing.signals['branch_survival_rate']:.2f} "
+            f"dominance={routing.signals['max_frame_dominance']:.2f} "
+            f"agreement={routing.signals['inter_frame_agreement']:.2f}[/dim]"
+        )
+        if routing.escalate_divergence:
+            console.print(
+                "  [bold yellow]↑ ESCALATE DIVERGENCE:[/bold yellow] branches agree too much "
+                "(shared blind spot) — add a different model family next cycle, e.g. "
+                "[dim]--providers ollama,codex[/dim]."
+            )
+
         # Track all branches in coupling state (mark as surfaced for debt tracking)
         for b in all_branches:
             coupling.integrate(b)
@@ -375,7 +394,9 @@ def run(
 
         synthesis_prompt = (
             f"ACE {'MIRROR' if mode == 'human' else 'GOVERNOR'} SESSION — {topic}\n"
-            f"Calibration: {preset_display} | Cycle {cycle_n}/{cycles} | Focus: {chosen_label}\n\n"
+            f"Calibration: {preset_display} | Cycle {cycle_n}/{cycles} | Focus: {chosen_label}\n"
+            f"Recommended synthesis model: {routing.synthesis_model} "
+            f"(regime: {routing.regime}) — {routing.rationale}\n\n"
             f"{len(all_branches)} branches:\n\n"
             f"{branch_lines}\n"
             f"{debt_note}\n\n"
