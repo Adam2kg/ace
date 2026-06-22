@@ -164,7 +164,7 @@ def run(
 
         all_branches = []
         for r in results:
-            indicator = "🔴" if r.provider == "codex" else "🟡"
+            indicator = {"codex": "🔴", "agy": "🧭"}.get(r.provider, "🟡")
             if not r.available:
                 console.print(f"{indicator} [red]{r.provider}[/red]: unavailable ({r.error})")
                 continue
