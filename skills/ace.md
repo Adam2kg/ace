@@ -1,6 +1,6 @@
 # /ace — Asymmetric Cognitive Equilibrium
 
-Run an ACE session: divergence agents (🔴🟡) generate branches in parallel,
+Run an ACE session: divergence agents (🔴🧭) generate branches in parallel,
 the synthesis agent (🔵) integrates via the coupling function.
 
 The coupling function — not the agents — is the primary design object.
@@ -51,7 +51,7 @@ AskUserQuestion({
         },
         {
           label: "No — AI-only divergence",
-          description: "AI providers (Codex, Gemini) generate the branches. Standard coupling dynamics."
+          description: "AI providers (Codex, agy) generate the branches. Standard coupling dynamics."
         }
       ]
     }
@@ -67,26 +67,45 @@ AskUserQuestion({
 | Debugging | `--preset debugging` |
 | Design review | `--preset design-review` |
 | Looping / repetitive | `--preset looping` |
+| frames-deep (via "Other") | `--preset frames-deep` |
+| frames-adversarial (via "Other") | `--preset frames-adversarial` |
+
+The frames presets (`frames-deep`, `frames-adversarial`) are frames-only: single
+provider + cognitive frames, **no external-provider dispatch**. Offer them when the
+user mentions budget/quota limits, conceptual work, or threat modeling — they can be
+selected through the "Other" free-text option in Step 1.
 
 | Human mode answer | CLI flag |
 |------------------|----------|
 | Yes | `--human-mode` |
 | No | (omit) |
 
-### Step 3 — Check providers and display banner
+### Step 3 — Display banner (MANDATORY before running)
+
+The engine renders its own banner — coupling, models, frames mode, and **live**
+provider availability. Run it and show its output to the user verbatim:
+
+```bash
+ace banner --preset <preset> [--human-mode]
+```
+
+- For `frames-deep` / `frames-adversarial` it prints NO external-provider rows
+  (frames-only presets do no multi-provider dispatch) — do not add any.
+- For all other presets it prints one row per active provider (default
+  `codex,agy`: 🔴 Codex, 🧭 agy) plus the 🔵 Claude synthesis row.
+- Gemini (🟡) is legacy/deprecated — it appears only if the user explicitly adds
+  it via `--providers ...,gemini`. Do not surface it otherwise.
+
+**Render statuses ONLY from command output. Never infer, guess, or hand-write a
+provider availability row — if a provider isn't in the output, it doesn't get a row.**
+
+Fallback (only if the `ace` CLI itself is missing — see Step 4): check availability
+directly and report exactly these three, nothing more:
 
 ```bash
 printf "codex:%s\n" "$(command -v codex >/dev/null 2>&1 && echo available || echo missing)"
+printf "agy:%s\n"   "$(command -v agy   >/dev/null 2>&1 && echo available || echo missing)"
 printf "gemini:%s\n" "$(command -v gemini >/dev/null 2>&1 && echo available || echo missing)"
-```
-
-Display banner (MANDATORY before running):
-```
-🐙 ACE — Asymmetric Cognitive Equilibrium
-Preset: [selected preset] [human-mode if active]
-🔴 Codex: [available ✓ / not installed ✗] — divergence (technical branches)
-🟡 Gemini: [available ✓ / not installed ✗] — divergence (lateral branches)
-🔵 Claude: available ✓ — synthesis (trajectory maintenance)
 ```
 
 ### Step 4 — Run
