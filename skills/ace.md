@@ -99,14 +99,43 @@ ace banner --preset <preset> [--human-mode]
 **Render statuses ONLY from command output. Never infer, guess, or hand-write a
 provider availability row — if a provider isn't in the output, it doesn't get a row.**
 
-Fallback (only if the `ace` CLI itself is missing — see Step 4): check availability
-directly and report exactly these three, nothing more:
+**Fallback** (only if the `ace` CLI itself is missing — see Step 4): build the banner
+from these two commands and NOTHING else. Both mirror the engine exactly; do not
+paraphrase or fill gaps from memory.
+
+1. Provider availability — render rows ONLY from this output:
 
 ```bash
 printf "codex:%s\n" "$(command -v codex >/dev/null 2>&1 && echo available || echo missing)"
 printf "agy:%s\n"   "$(command -v agy   >/dev/null 2>&1 && echo available || echo missing)"
 printf "gemini:%s\n" "$(command -v gemini >/dev/null 2>&1 && echo available || echo missing)"
 ```
+
+2. Preset coupling — read from the engine's presets, never hand-write model names
+   (append `p = apply_human_mode(p)` after `get_preset` when human-mode is active):
+
+```bash
+python3 -c "
+import sys, os; sys.path.insert(0, os.path.expanduser('~/ace'))
+from ace.presets import get_preset, apply_human_mode
+p = get_preset('<preset>')
+print(f'frames_only:{p.frames_only}')
+print(f'frames_set:{p.frames_set}')
+print(f'divergence_model:{p.divergence_model}')
+print(f'synthesis_model:{p.synthesis_model}')
+print(f'synthesis_strength:{p.synthesis_strength}')
+"
+```
+
+Then assemble:
+
+- If `frames_only:True` → show
+  `Divergence: {divergence_model} (frames-{frames_set}) — single provider, cognitive frames`
+  and NO provider rows (step 1's output is irrelevant; discard it).
+- Otherwise → one row per active provider (default `codex,agy`) with status from
+  step 1, then `Divergence: {divergence_model} (codex, agy) + cognitive frames` and
+  `Synthesis: {synthesis_model} (strength {synthesis_strength}/5)`.
+- Gemini row only if the user explicitly adds gemini to `--providers`.
 
 ### Step 4 — Run
 
