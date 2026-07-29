@@ -1,0 +1,28 @@
+{
+  "name": "ace",
+  "version": "0.1.0",
+  "description": "Asymmetric Cognitive Equilibrium — cognitive-divergence CLI for Mirror and Governor thinking modes",
+  "author": {
+    "name": "Adam2kg",
+    "url": "https://github.com/Adam2kg"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Adam2kg/ace",
+  "homepage": "https://github.com/Adam2kg/ace",
+  "keywords": [
+    "cognitive-divergence",
+    "thinking-scaffold",
+    "mirror-mode",
+    "governor-mode",
+    "multi-provider",
+    "codex",
+    "gemini",
+    "claude-code-plugin"
+  ],
+  "skills": [
+    "./skills/ace"
+  ],
+  "commands": [
+    "./.claude/commands/ace.md"
+  ]
+}

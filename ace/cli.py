@@ -25,7 +25,8 @@ from ace.agents.divergence import diverge
 from ace.agents.synthesis import TrajectorySegment
 from ace.coupling.function import CouplingFunction
 from ace.coupling.routing import recommend_routing
-from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, get_preset
+from ace.memory.cli import memory_group
+from ace.presets import DEFAULT_HUMAN_PRESET, PRESETS, apply_human_mode, apply_overrides, effective_synthesis_strength, get_preset
 
 console = Console()
 
@@ -33,6 +34,9 @@ console = Console()
 @click.group()
 def main():
     pass
+
+
+main.add_command(memory_group)
 
 
 _AI_PRESET_LABELS = {

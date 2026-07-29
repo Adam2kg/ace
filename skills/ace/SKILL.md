@@ -1,3 +1,9 @@
+---
+name: ace
+version: 0.1.0
+description: Cognitive-divergence CLI for Mirror mode (human thinking scaffold) and Governor mode (AI thinking scaffold)
+---
+
 # /ace — Asymmetric Cognitive Equilibrium
 
 Run an ACE session: the coupling function scaffolds a thinking process — either your own
