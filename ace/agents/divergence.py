@@ -337,7 +337,22 @@ def diverge(
     for missing provider perspectives.
     """
     runners: dict[str, object] = {"agy": _run_agy, "ollama": _run_ollama}
-    active = [p for p in (providers or list(runners.keys())) if p in runners]
+    requested = providers or list(runners.keys())
+    active = [p for p in requested if p in runners]
+
+    # Fail LOUD on an all-unknown provider list. Unknown names are dropped
+    # silently, so an all-unknown list used to reach ThreadPoolExecutor with
+    # max_workers=0 and die on an opaque ValueError. The 2026-07 prune removed
+    # the `codex` and `gemini` runners, so `--providers codex` is exactly what
+    # muscle memory types — it must say so plainly instead of crashing.
+    if not active:
+        unknown = ", ".join(requested) or "(empty)"
+        raise ValueError(
+            f"No known divergence providers in: {unknown}. "
+            f"Available: {', '.join(sorted(runners))}. "
+            "Note: 'codex' and 'gemini' were removed in the 2026-07 fleet prune "
+            "(codex quota-dead, gemini CLI retired)."
+        )
 
     # Assign frames before dispatch so each provider gets a distinct one
     used_frames: set[str] = set()
