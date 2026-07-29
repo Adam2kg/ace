@@ -5,7 +5,7 @@ CLI entry point.
 Usage:
     ace run <topic>                    # single ACE cycle
     ace run <topic> --cycles 3        # N diverge→synthesize cycles
-    ace run <topic> --providers codex,gemini
+    ace run <topic> --providers codex,agy
     ace status                         # show coupling state (requires --state-file)
     ace debt --state-file ace_state.json  # show attractor debt
 """
@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 
 import click
@@ -56,11 +57,66 @@ _HUMAN_PRESET_DISPLAY = {
 _AI_PRESET_RECOMMENDED = "architecture"
 _HUMAN_PRESET_RECOMMENDED = "human-adhd"
 
+# Provider display metadata — single source of truth for banner rows.
+# Keep in sync with the indicator map used when printing divergence results.
+_PROVIDER_ROWS = {
+    "codex": ("🔴", "divergence (technical branches)"),
+    "agy": ("🧭", "divergence (lateral branches; live Google seat)"),
+    "gemini": ("🟡", "divergence (legacy — deprecated, superseded by agy)"),
+}
+
+
+def _session_panel(topic, preset, profile, provider_list, cycles, human_mode):
+    """Build the coupling banner panel. Shared by `run` and `banner`."""
+    frames_tag = "[cyan]frames-only[/cyan] " if profile.frames_only else ""
+    mode_tag = "[magenta]human-mode[/magenta] " if human_mode else ""
+    divergence_line = (
+        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
+        f"(frames-{profile.frames_set})"
+        if profile.frames_only else
+        f"[dim]Divergence:[/dim] [yellow]{profile.divergence_model}[/yellow] "
+        f"({', '.join(provider_list)}) + cognitive frames"
+    )
+    return Panel(
+        f"[bold cyan]ACE — Asymmetric Cognitive Equilibrium[/bold cyan]\n"
+        f"[dim]Topic:[/dim] {topic}\n"
+        f"[dim]Preset:[/dim] [green]{preset}[/green] {frames_tag}{mode_tag}\n"
+        f"{divergence_line}\n"
+        f"[dim]Synthesis:[/dim] [blue]{profile.synthesis_model}[/blue] "
+        f"(strength {profile.synthesis_strength}/5{'↗' if profile.dynamic_cq else ''})\n"
+        f"[dim]Cycles:[/dim] {cycles} | "
+        f"[dim]Debt threshold:[/dim] {profile.debt_surface_threshold} | "
+        f"[dim]Budget:[/dim] {profile.base_interrupt_budget}",
+        border_style="cyan",
+    )
+
+
+def _print_provider_rows(profile, provider_list):
+    """Print per-provider availability, checked live via PATH lookup.
+
+    frames_only presets do no multi-provider dispatch, so external-provider
+    rows would be noise — print the frames note instead.
+    """
+    if profile.frames_only:
+        console.print(
+            f"[cyan]Frames-only mode:[/cyan] single provider, cognitive frames "
+            f"({profile.frames_set} set) — no external providers used."
+        )
+        return
+    for provider in provider_list:
+        indicator, role = _PROVIDER_ROWS.get(provider, ("🟡", "divergence"))
+        if shutil.which(provider):
+            status = "[green]available ✓[/green]"
+        else:
+            status = "[red]not installed ✗[/red]"
+        console.print(f"{indicator} [bold]{provider}[/bold]: {status} — {role}")
+    console.print("🔵 [bold]Claude[/bold]: [green]available ✓[/green] — synthesis (trajectory maintenance)")
+
 
 @main.command()
 @click.argument("topic")
 @click.option("--cycles", default=1, show_default=True, help="Diverge→synthesize cycles to run")
-@click.option("--providers", default="codex,gemini", show_default=True,
+@click.option("--providers", default="codex,agy", show_default=True,
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
 @click.option("--preset", default=None, type=click.Choice(list(PRESETS.keys())),
@@ -235,7 +291,7 @@ def run(
         all_branches = []
         live_providers = set()
         for r in results:
-            indicator = "🔴" if r.provider == "codex" else "🟡"
+            indicator = {"codex": "🔴", "agy": "🧭"}.get(r.provider, "🟡")
             if not r.available:
                 console.print(f"{indicator} [red]{r.provider}[/red]: unavailable ({r.error})")
                 continue
@@ -459,6 +515,29 @@ def run(
             "\n[dim]Governor mode: paste the synthesis prompt into Claude Code "
             "to integrate branches into trajectory.[/dim]"
         )
+
+
+@main.command()
+@click.option("--preset", required=True, type=click.Choice(list(PRESETS.keys())),
+              help="Coupling preset to display")
+@click.option("--providers", default="codex,agy", show_default=True,
+              help="Comma-separated list of divergence providers")
+@click.option("--human-mode", is_flag=True, default=False,
+              help="Show the human-mode coupling adjustments")
+@click.option("--cycles", default=1, show_default=True, help="Cycles the session will run")
+def banner(preset: str, providers: str, human_mode: bool, cycles: int):
+    """Print the session banner and live provider availability — no session is run.
+
+    Single source of truth for anything (e.g. the /ace skill) that needs to
+    display coupling + provider status without re-deriving it by hand.
+    """
+    provider_list = [p.strip() for p in providers.split(",")]
+    profile = get_preset(preset)
+    if human_mode:
+        profile = apply_human_mode(profile)
+    console.print(_session_panel("(preflight — no topic yet)", preset, profile,
+                                 provider_list, cycles, human_mode))
+    _print_provider_rows(profile, provider_list)
 
 
 @main.command()

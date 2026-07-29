@@ -235,6 +235,38 @@ def _run_ollama(topic: str, frame_id: str | None = None) -> DivergenceResult:
                                 available=False, error=str(e), frame_id=frame_id)
 
 
+def _run_agy(topic: str, frame_id: str | None = None) -> DivergenceResult:
+    """Antigravity (agy) divergence runner — the live Google/Gemini seat.
+
+    Replaces the dead `gemini` CLI path. agy reads the prompt via -p and prints
+    the response in print mode. Model overridable via OCTOPUS_AGY_MODEL.
+    """
+    start = time.time()
+    instruction = _build_framed_prompt(
+        topic, frame_id,
+        "Output: numbered list of distinct branches (ideas, approaches, angles). "
+        "Each branch: one sentence label + one sentence rationale. "
+        "Minimum 4 branches. Prioritize surprising, non-obvious angles. "
+        "Push past the obvious — the first 3 ideas you'd think of are banned.",
+    )
+    model = os.environ.get("OCTOPUS_AGY_MODEL", "Gemini 3.1 Pro (High)")
+    try:
+        result = subprocess.run(
+            ["agy", "-p", instruction, "--model", model, "--print-timeout", "110s"],
+            capture_output=True, text=True, timeout=130,
+        )
+        raw = result.stdout.strip()
+        elapsed = time.time() - start
+        if _is_quota_error(raw):
+            return DivergenceResult("agy", [], raw, elapsed, available=False,
+                                    error="quota_exceeded", frame_id=frame_id)
+        branches = _parse_branches(raw, "agy", frame_id)
+        return DivergenceResult("agy", branches, raw, elapsed, frame_id=frame_id)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return DivergenceResult("agy", [], "", time.time() - start,
+                                available=False, error=str(e), frame_id=frame_id)
+
+
 def _is_quota_error(text: str) -> bool:
     low = text.lower()
     return any(p in low for p in (
@@ -336,7 +368,7 @@ def diverge(
     Returns all results including failures so the coupling function can account
     for missing provider perspectives.
     """
-    runners: dict[str, object] = {"codex": _run_codex, "gemini": _run_gemini, "ollama": _run_ollama}
+    runners: dict[str, object] = {"codex": _run_codex, "gemini": _run_gemini, "ollama": _run_ollama, "agy": _run_agy}
     active = [p for p in (providers or list(runners.keys())) if p in runners]
 
     # Assign frames before dispatch so each provider gets a distinct one

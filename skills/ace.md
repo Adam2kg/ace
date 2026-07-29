@@ -74,23 +74,74 @@ AskUserQuestion({
 | Deep Focus | `--preset human-scientific` |
 | Architecture | `--preset architecture` |
 | Debugging | `--preset debugging` |
+| Design review | `--preset design-review` |
+| Looping / repetitive | `--preset looping` |
+| frames-deep (via "Other") | `--preset frames-deep` |
+| frames-adversarial (via "Other") | `--preset frames-adversarial` |
+
+The frames presets (`frames-deep`, `frames-adversarial`) are frames-only: single
+provider + cognitive frames, **no external-provider dispatch**. Offer them when the
+user mentions budget/quota limits, conceptual work, or threat modeling — they can be
+selected through the "Other" free-text option in Step 1.
 
 If user picks Mirror + no calibration: default to Explorer (`--preset human-adhd --human-mode`).
 
-### Step 3 — Check providers and display banner
+### Step 3 — Display banner (MANDATORY before running)
+
+The engine renders its own banner — coupling, models, frames mode, and **live**
+provider availability. Run it and show its output to the user verbatim:
+
+```bash
+ace banner --preset <preset> [--human-mode]
+```
+
+- For `frames-deep` / `frames-adversarial` it prints NO external-provider rows
+  (frames-only presets do no multi-provider dispatch) — do not add any.
+- For all other presets it prints one row per active provider (default
+  `codex,agy`: 🔴 Codex, 🧭 agy) plus the 🔵 Claude synthesis row.
+- Gemini (🟡) is legacy/deprecated — it appears only if the user explicitly adds
+  it via `--providers ...,gemini`. Do not surface it otherwise.
+
+**Render statuses ONLY from command output. Never infer, guess, or hand-write a
+provider availability row — if a provider isn't in the output, it doesn't get a row.**
+
+**Fallback** (only if the `ace` CLI itself is missing — see Step 4): build the banner
+from these two commands and NOTHING else. Both mirror the engine exactly; do not
+paraphrase or fill gaps from memory.
+
+1. Provider availability — render rows ONLY from this output:
 
 ```bash
 printf "codex:%s\n" "$(command -v codex >/dev/null 2>&1 && echo available || echo missing)"
+printf "agy:%s\n"   "$(command -v agy   >/dev/null 2>&1 && echo available || echo missing)"
 printf "gemini:%s\n" "$(command -v gemini >/dev/null 2>&1 && echo available || echo missing)"
 ```
 
-Display banner (MANDATORY before running):
+2. Preset coupling — read from the engine's presets, never hand-write model names
+   (append `p = apply_human_mode(p)` after `get_preset` when human-mode is active):
+
+```bash
+python3 -c "
+import sys, os; sys.path.insert(0, os.path.expanduser('~/ace'))
+from ace.presets import get_preset, apply_human_mode
+p = get_preset('<preset>')
+print(f'frames_only:{p.frames_only}')
+print(f'frames_set:{p.frames_set}')
+print(f'divergence_model:{p.divergence_model}')
+print(f'synthesis_model:{p.synthesis_model}')
+print(f'synthesis_strength:{p.synthesis_strength}')
+"
 ```
-🐙 ACE — [MIRROR | GOVERNOR] mode — [Calibration label]
-🔴 Codex: [available ✓ / not installed ✗] — divergence (technical branches)
-🟡 Gemini: [available ✓ / not installed ✗] — divergence (lateral branches)
-🔵 Claude: available ✓ — synthesis (trajectory maintenance)
-```
+
+Then assemble:
+
+- If `frames_only:True` → show
+  `Divergence: {divergence_model} (frames-{frames_set}) — single provider, cognitive frames`
+  and NO provider rows (step 1's output is irrelevant; discard it).
+- Otherwise → one row per active provider (default `codex,agy`) with status from
+  step 1, then `Divergence: {divergence_model} (codex, agy) + cognitive frames` and
+  `Synthesis: {synthesis_model} (strength {synthesis_strength}/5)`.
+- Gemini row only if the user explicitly adds gemini to `--providers`.
 
 ### Step 4 — Run
 
