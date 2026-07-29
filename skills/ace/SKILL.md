@@ -97,16 +97,27 @@ If user picks Mirror + no calibration: default to Explorer (`--preset human-adhd
 The engine renders its own banner — coupling, models, frames mode, and **live**
 provider availability. Run it and show its output to the user verbatim:
 
-```bash
-ace banner --preset <preset> [--human-mode]
+```bash tier=T1
+cd ~/ace-unify && /usr/local/bin/python3.11 -m ace.cli banner --preset architecture
 ```
+
+> ⚠️ **Use the module form above, not bare `ace banner`.** Verified 2026-07-29: the
+> globally installed `/usr/local/bin/ace` is **stale** — it exposes only `run` and
+> `debt`, so `ace banner` exits 2 with `No such command 'banner'`. The repo's
+> `ace/cli.py` does define `banner`. Until the install is refreshed
+> (`cd ~/ace && pip install -e .`, T3), always invoke via `python3.11 -m ace.cli`.
+> Note also that system `python3` is 3.9 and **cannot** import this package — use
+> `/usr/local/bin/python3.11`.
 
 - For `frames-deep` / `frames-adversarial` it prints NO external-provider rows
   (frames-only presets do no multi-provider dispatch) — do not add any.
-- For all other presets it prints one row per active provider (default
-  `codex,agy`: 🔴 Codex, 🧭 agy) plus the 🔵 Claude synthesis row.
-- Gemini (🟡) is legacy/deprecated — it appears only if the user explicitly adds
-  it via `--providers ...,gemini`. Do not surface it otherwise.
+- For all other presets it prints one row per active provider (default `agy`:
+  🧭 agy) plus the 🔵 Claude synthesis row.
+- **The fleet was pruned on 2026-07-29.** `codex` (quota-dead, exit 137) and the
+  `gemini` CLI (retired) were **deleted** from the engine — there is no runner for
+  either. The only divergence runners are `_run_agy` and `_run_ollama`. Never render
+  a Codex or Gemini row; passing `--providers codex` or `--providers gemini` now
+  yields no runner. See the sibling skill `ace-doctor` for seat health.
 
 **Render statuses ONLY from command output. Never infer, guess, or hand-write a
 provider availability row — if a provider isn't in the output, it doesn't get a row.**
@@ -117,20 +128,25 @@ paraphrase or fill gaps from memory.
 
 1. Provider availability — render rows ONLY from this output:
 
-```bash
-printf "codex:%s\n" "$(command -v codex >/dev/null 2>&1 && echo available || echo missing)"
-printf "agy:%s\n"   "$(command -v agy   >/dev/null 2>&1 && echo available || echo missing)"
-printf "gemini:%s\n" "$(command -v gemini >/dev/null 2>&1 && echo available || echo missing)"
+```bash tier=T1
+printf "agy:%s\n"    "$(command -v agy    >/dev/null 2>&1 && echo present || echo missing)"
+printf "ollama:%s\n" "$(command -v ollama >/dev/null 2>&1 && echo present || echo missing)"
 ```
+
+> ⚠️ **`command -v` proves PRESENCE, not health — this is the zombie gate.** A binary
+> that exists but has dead auth returns empty output while reporting "available", and
+> that vacuous silence can be miscounted as agreement. For a real health check that
+> verifies actual on-topic output, use `ace-doctor` (`~/.claude/scripts/adapters/doctor.sh`).
+> Use the probe below only as a last-resort fallback when the `ace` CLI itself is missing.
 
 2. Preset coupling — read from the engine's presets, never hand-write model names
    (append `p = apply_human_mode(p)` after `get_preset` when human-mode is active):
 
-```bash
-python3 -c "
+```bash tier=T1
+/usr/local/bin/python3.11 -c "
 import sys, os; sys.path.insert(0, os.path.expanduser('~/ace'))
 from ace.presets import get_preset, apply_human_mode
-p = get_preset('<preset>')
+p = get_preset('architecture')   # substitute the user's chosen preset
 print(f'frames_only:{p.frames_only}')
 print(f'frames_set:{p.frames_set}')
 print(f'divergence_model:{p.divergence_model}')
@@ -144,19 +160,20 @@ Then assemble:
 - If `frames_only:True` → show
   `Divergence: {divergence_model} (frames-{frames_set}) — single provider, cognitive frames`
   and NO provider rows (step 1's output is irrelevant; discard it).
-- Otherwise → one row per active provider (default `codex,agy`) with status from
-  step 1, then `Divergence: {divergence_model} (codex, agy) + cognitive frames` and
+- Otherwise → one row per active provider (default `agy`) with status from step 1,
+  then `Divergence: {divergence_model} (agy) + cognitive frames` and
   `Synthesis: {synthesis_model} (strength {synthesis_strength}/5)`.
-- Gemini row only if the user explicitly adds gemini to `--providers`.
+- Add an `ollama` row only when the user explicitly passes `--providers ...,ollama`
+  (local seat; see `ace-debate` for why a local model is never a debate peer).
 
 ### Step 4 — Run
 
-```bash
+```bash tier=T3 verified=2026-07-29
 ace run "<topic>" --preset <preset> [--human-mode] [--cycles N]
 ```
 
 If `ace` CLI is not available:
-```bash
+```bash tier=T3 verified=2026-07-29
 cd ~/ace && pip install -e .
 ```
 
@@ -279,8 +296,8 @@ High debt = trajectory is being warped by invisible pressure.
 Warning: *"Frame monoculture detected — all branches use [domain] framing.
 A perspective shift might reveal what this frame hides."*
 This is a structural warning, not a content warning.
-*Now gated on provider count: with fewer than 2 live divergence providers (e.g. codex*
-*quota-exhausted, gemini only) the warning is suppressed, since one provider's framing*
+*Now gated on provider count: with fewer than 2 live divergence providers (e.g. agy*
+*quota-exhausted, leaving ollama alone) the warning is suppressed, since one provider's framing*
 *bias can't be distinguished from genuine cross-provider monoculture. Always active in*
 *frames-only mode, where diversity is frame-based. See "Tuning items — resolved" (#1).*
 
@@ -320,46 +337,14 @@ Default: 4 (architecture), 3 (debugging), 2 (design-review), 1 (looping).
 
 ## Diagnosing misbehavior
 
-### "Every branch feels like the same idea from a different angle"
+Symptom-driven diagnosis for **session behavior** — "every branch feels the same"
+(frame monoculture), "synthesis is noise", "overthinking warning won't stop",
+"attractor debt is always 0", "deferred_count high but nothing surfaces" — is in
+[`references/session-diagnosis.md`](references/session-diagnosis.md).
 
-Frame monoculture. ACE should have warned. If it didn't fire:
-- Check if `--preset` is a human-mode preset (monoculture detection is always active)
-- Add a different seed topic next cycle: "What would someone who DISAGREES with all of this say?"
-- Try `--preset frames-adversarial` for one cycle to force perspective diversity
-
-### "The synthesis panel is useless / feels like noise"
-
-Two causes:
-1. **Too many branches** — reduce `--cycles` or pick focus option [1] or [3] instead of [4]
-2. **Wrong calibration** — Explorer for scattered thinking, Deep Focus for precision work. If you're in Deep Focus during open-ended exploration, synthesis will try to converge prematurely.
-
-### "ACE keeps warning about overthinking but I'm not looping"
-
-The overthinking warning fires when ≥2 branches have been visited ≥3 times with stagnant
-progress delta (< 0.08) across all recent visits. If this fires on genuine deepening:
-- This is a calibration gap — Explorer uses a lower depth delta floor (0.15) to better
-  distinguish deepening from looping
-- Switch to Explorer or set `--preset human-adhd` explicitly
-- *Still pending — the one calibration run (2 cycles) never triggered re-emergence, so the*
-  *0.08 stagnation threshold is untested. Needs a ≥4-cycle run with deliberate revisiting.*
-
-### "Nothing is getting deferred / attractor debt is always 0"
-
-This means all branches are being integrated immediately — coupling function isn't accumulating
-anything. Two causes:
-1. Topic is genuinely well-bounded (good)
-2. Budget is too high and the coupling function never needs to defer anything — try reducing
-   `--cycles` or use `--preset debugging` for tighter budget
-
-### "The coupling state shows high deferred_count but nothing is surfacing"
-
-Debt threshold is too high for the session. Adjustable:
-```bash
-ace run "<topic>" --preset human-adhd --debt-threshold 1.5 --human-mode
-```
-Or use Deep Focus which has a threshold of 6.0 (patient); Explorer uses 2.0 (reactive).
-
----
+For **provider seat** problems (a seat is down, auth dead, quota exhausted, or
+returning empty output while reporting available) use the sibling skill
+`ace-doctor` — that is a different failure domain and it owns the zombie gate.
 
 ## CLI reference
 
@@ -387,7 +372,7 @@ Exit codes:
 ```
 
 If `ace` CLI is not found:
-```bash
+```bash tier=T3 verified=2026-07-29
 cd ~/ace && pip install -e .
 ```
 
@@ -395,15 +380,6 @@ cd ~/ace && pip install -e .
 
 ## Tuning items — resolved
 
-Resolved from the first live Mirror calibration run (2 cycles, 360-editor decision),
-cross-checked against an external Gemini review.
-
-| # | Item | Verdict | Change | Status |
-|---|------|---------|--------|--------|
-| 1 | Frame-monoculture detector | TUNE | `frame_monoculture_risk(branches, live_provider_count)` returns False when < 2 providers contributed; CLI passes the live count (multi-provider mode only, not frames-only) | **done** + tests |
-| 2 | Synthesis focus menu | VALIDATED | Keep all four options — focused panels beat the full dump | done (no change) |
-| 3 | Overthinking warning | KEEP-PENDING | Needs a ≥4-cycle run with deliberate revisiting to test the 0.08 stagnation threshold | awaiting run |
-| 4 | Explorer coherence floor | TUNE | New `coherence_floor` profile field + `--coherence-floor` override + `apply_coherence_floor()`. Deep Focus sets 0.70; Explorer stays 0.0 (off). Drops sub-floor branches before synthesis, never empties the set | **done** + tests |
-
-Tests for items 1 and 4 live in `tests/test_coupling_tuning.py` (14 cases).
-Run them with `python3 -m pytest`.
+Historical calibration decisions (frame-monoculture gating, synthesis focus menu,
+overthinking threshold, coherence floor) live in
+[`references/tuning-history.md`](references/tuning-history.md).
