@@ -18,10 +18,10 @@ def _banner(*args):
 
 def test_architecture_shows_default_provider_rows_and_coupling():
     out = _banner("--preset", "architecture")
-    assert "codex" in out
     assert "agy" in out
     assert "Claude" in out
-    # Deprecated gemini seat is not in the default provider list
+    # Retired seats are not in the default provider list (post-prune fleet)
+    assert "codex" not in out
     assert "gemini" not in out
     # Preset coupling comes from presets.py, not a hand-maintained template
     assert "claude-sonnet-4-6" in out
@@ -48,15 +48,17 @@ def test_availability_is_checked_not_guessed(monkeypatch):
 
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
     out = _banner("--preset", "architecture")
-    assert out.count("not installed ✗") == 2  # codex + agy
+    assert out.count("not installed ✗") == 1  # agy (sole default external seat)
 
     monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/local/bin/{name}")
     out = _banner("--preset", "architecture")
     assert "not installed" not in out
-    assert out.count("available ✓") >= 3  # codex + agy + Claude
+    assert out.count("available ✓") >= 2  # agy + Claude
 
 
-def test_run_defaults_to_codex_agy():
+def test_run_defaults_to_agy():
     result = CliRunner().invoke(main, ["run", "--help"])
     assert result.exit_code == 0
-    assert "codex,agy" in result.output
+    # codex is quota-dead and pruned; agy is the sole default external seat
+    assert "default: agy" in result.output
+    assert "codex" not in result.output

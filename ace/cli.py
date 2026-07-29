@@ -120,7 +120,7 @@ def _print_provider_rows(profile, provider_list):
 @main.command()
 @click.argument("topic")
 @click.option("--cycles", default=1, show_default=True, help="Diverge→synthesize cycles to run")
-@click.option("--providers", default="codex,agy", show_default=True,
+@click.option("--providers", default="agy", show_default=True,
               help="Comma-separated list of divergence providers")
 @click.option("--state-file", default=None, help="Path to persist coupling state JSON")
 @click.option("--preset", default=None, type=click.Choice(list(PRESETS.keys())),
@@ -524,7 +524,7 @@ def run(
 @main.command()
 @click.option("--preset", required=True, type=click.Choice(list(PRESETS.keys())),
               help="Coupling preset to display")
-@click.option("--providers", default="codex,agy", show_default=True,
+@click.option("--providers", default="agy", show_default=True,
               help="Comma-separated list of divergence providers")
 @click.option("--human-mode", is_flag=True, default=False,
               help="Show the human-mode coupling adjustments")

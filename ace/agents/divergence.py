@@ -99,10 +99,14 @@ FRAMES: dict[str, str] = {
 # Two frames remain empirically disputed (speedrunner, remove-assumption);
 # assignments below reflect the 2-1 majority position.
 FRAME_PROVIDER_AFFINITY: dict[str, list[str]] = {
-    "codex":  ["hardware-engineer", "ops-3am", "extreme-zero", "speedrunner"],
-    "gemini": ["biology", "markets", "ten-year-old", "regulator"],
-    "qwen":   ["ant-colony", "adversary", "inversion", "extreme-infinite", "remove-assumption"],
-    "ollama": ["game-design", "logistics"],
+    # Post-prune fleet (2026-07): codex (quota-dead) and gemini CLI (retired)
+    # are gone; their frames are redistributed to the surviving seats.
+    # agy = live Gemini-family seat (lateral + technical frames).
+    # ollama = local Qwen (structural/adversarial frames; qwen seat folded in).
+    "agy":    ["biology", "markets", "ten-year-old", "regulator",
+               "hardware-engineer", "ops-3am", "extreme-zero", "speedrunner"],
+    "ollama": ["game-design", "logistics", "ant-colony", "adversary",
+               "inversion", "extreme-infinite", "remove-assumption"],
 }
 
 # Frames used for frames-only presets (no multi-provider dispatch).
@@ -135,58 +139,6 @@ def _build_framed_prompt(topic: str, frame_id: str | None, suffix: str) -> str:
     )
 
 
-def _run_codex(topic: str, frame_id: str | None = None) -> DivergenceResult:
-    start = time.time()
-    instruction = _build_framed_prompt(
-        topic, frame_id,
-        "Output: numbered list of distinct branches (ideas, approaches, angles). "
-        "Each branch: one sentence label + one sentence rationale. "
-        "Minimum 4 branches. Prioritize specificity over generality. "
-        "Push past the obvious — the first 3 ideas you'd think of are banned.",
-    )
-    try:
-        result = subprocess.run(
-            ["codex", "exec", "--skip-git-repo-check", "--full-auto", instruction],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
-        )
-        raw = result.stdout.strip()
-        elapsed = time.time() - start
-        if _is_quota_error(raw) or _is_quota_error(result.stderr or ""):
-            return DivergenceResult("codex", [], raw, elapsed, available=False,
-                                    error="quota_exceeded", frame_id=frame_id)
-        branches = _parse_branches(raw, "codex", frame_id)
-        return DivergenceResult("codex", branches, raw, elapsed, frame_id=frame_id)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return DivergenceResult("codex", [], "", time.time() - start,
-                                available=False, error=str(e), frame_id=frame_id)
-
-
-def _run_gemini(topic: str, frame_id: str | None = None) -> DivergenceResult:
-    start = time.time()
-    instruction = _build_framed_prompt(
-        topic, frame_id,
-        "Output: numbered list of distinct branches (ideas, approaches, angles). "
-        "Each branch: one sentence label + one sentence rationale. "
-        "Minimum 4 branches. Prioritize surprising, non-obvious angles. "
-        "Push past the obvious — the first 3 ideas you'd think of are banned.",
-    )
-    try:
-        result = subprocess.run(
-            ["gemini", "-p", "", "-o", "text", "--approval-mode", "yolo"],
-            input=instruction, capture_output=True, text=True, timeout=120,
-        )
-        raw = result.stdout.strip()
-        elapsed = time.time() - start
-        if _is_quota_error(raw):
-            return DivergenceResult("gemini", [], raw, elapsed, available=False,
-                                    error="quota_exceeded", frame_id=frame_id)
-        branches = _parse_branches(raw, "gemini", frame_id)
-        return DivergenceResult("gemini", branches, raw, elapsed, frame_id=frame_id)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return DivergenceResult("gemini", [], "", time.time() - start,
-                                available=False, error=str(e), frame_id=frame_id)
-
-
 def _ollama_model() -> str:
     """First locally-installed Ollama model, or the configured override."""
     env = os.environ.get("ACE_OLLAMA_MODEL") or os.environ.get("OCTOPUS_OLLAMA_MODEL")
@@ -205,13 +157,19 @@ def _ollama_model() -> str:
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][0-9A-Za-z]|[\x00-\x08\x0b-\x1f]")
 
+# Hardened provider adapters (standalone, octopus-free — see
+# ~/.claude/scripts/adapters/HARVEST.md). Runners shell out to these so
+# invocation quirks (auth, sandboxing, fail-closed pulls) live in ONE place.
+_ADAPTERS = os.path.expanduser("~/.claude/scripts/adapters")
+
 
 def _run_ollama(topic: str, frame_id: str | None = None) -> DivergenceResult:
     """Local divergence runner — zero external dependency, no API cost.
 
-    The branch-source-as-commodity path: the coupling function is the IP, the
-    branch generator is fungible. Use this when external providers are down or
-    when a session should stay fully local.
+    Calls the hardened `ollama.sh` adapter: FAIL-CLOSED on absent models (no
+    silent auto-pull), think:false + capped tokens, non-empty output enforced.
+    Zombie gate: empty output or non-zero exit => available=False, never a
+    silently-empty "healthy" seat.
     """
     start = time.time()
     instruction = _build_framed_prompt(
@@ -221,13 +179,18 @@ def _run_ollama(topic: str, frame_id: str | None = None) -> DivergenceResult:
         "Minimum 4 branches. Prioritize specificity over generality. "
         "Push past the obvious — the first 3 ideas you'd think of are banned.",
     )
+    env = {**os.environ, "OLLAMA_MODEL": _ollama_model(), "OLLAMA_NUM_PREDICT": "1024"}
     try:
         result = subprocess.run(
-            ["ollama", "run", _ollama_model()],
-            input=instruction, capture_output=True, text=True, timeout=240,
+            [os.path.join(_ADAPTERS, "ollama.sh"), instruction],
+            capture_output=True, text=True, timeout=300, env=env,
         )
         raw = _ANSI_RE.sub("", result.stdout).strip()
         elapsed = time.time() - start
+        if result.returncode != 0 or not raw:
+            return DivergenceResult("ollama", [], raw, elapsed, available=False,
+                                    error=(result.stderr.strip() or "empty_output")[:200],
+                                    frame_id=frame_id)
         branches = _parse_branches(raw, "ollama", frame_id)
         return DivergenceResult("ollama", branches, raw, elapsed, frame_id=frame_id)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -238,8 +201,10 @@ def _run_ollama(topic: str, frame_id: str | None = None) -> DivergenceResult:
 def _run_agy(topic: str, frame_id: str | None = None) -> DivergenceResult:
     """Antigravity (agy) divergence runner — the live Google/Gemini seat.
 
-    Replaces the dead `gemini` CLI path. agy reads the prompt via -p and prints
-    the response in print mode. Model overridable via OCTOPUS_AGY_MODEL.
+    Calls the hardened `agy.sh` adapter (argv mode, --sandbox, NO --model
+    override: forcing a model once pushed agy onto an exhaustible quota group
+    and produced silent empty output — the original zombie-gate incident).
+    Zombie gate: empty output or non-zero exit => available=False.
     """
     start = time.time()
     instruction = _build_framed_prompt(
@@ -249,17 +214,20 @@ def _run_agy(topic: str, frame_id: str | None = None) -> DivergenceResult:
         "Minimum 4 branches. Prioritize surprising, non-obvious angles. "
         "Push past the obvious — the first 3 ideas you'd think of are banned.",
     )
-    model = os.environ.get("OCTOPUS_AGY_MODEL", "Gemini 3.1 Pro (High)")
     try:
         result = subprocess.run(
-            ["agy", "-p", instruction, "--model", model, "--print-timeout", "110s"],
-            capture_output=True, text=True, timeout=130,
+            [os.path.join(_ADAPTERS, "agy.sh"), instruction],
+            capture_output=True, text=True, timeout=330,
         )
         raw = result.stdout.strip()
         elapsed = time.time() - start
         if _is_quota_error(raw):
             return DivergenceResult("agy", [], raw, elapsed, available=False,
                                     error="quota_exceeded", frame_id=frame_id)
+        if result.returncode != 0 or not raw:
+            return DivergenceResult("agy", [], raw, elapsed, available=False,
+                                    error=(result.stderr.strip() or "empty_output")[:200],
+                                    frame_id=frame_id)
         branches = _parse_branches(raw, "agy", frame_id)
         return DivergenceResult("agy", branches, raw, elapsed, frame_id=frame_id)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -368,7 +336,7 @@ def diverge(
     Returns all results including failures so the coupling function can account
     for missing provider perspectives.
     """
-    runners: dict[str, object] = {"codex": _run_codex, "gemini": _run_gemini, "ollama": _run_ollama, "agy": _run_agy}
+    runners: dict[str, object] = {"agy": _run_agy, "ollama": _run_ollama}
     active = [p for p in (providers or list(runners.keys())) if p in runners]
 
     # Assign frames before dispatch so each provider gets a distinct one
