@@ -84,8 +84,7 @@ Graceful degradation below. ACE does **not** structurally prevent routing to it:
 privacy-bound run, pin the model explicitly:**
 
 ```bash tier=T1
-export ACE_OLLAMA_MODEL=qwen2.5-coder:7b
-echo "ACE_OLLAMA_MODEL=$ACE_OLLAMA_MODEL"   # echo back: an export alone proves nothing
+export ACE_OLLAMA_MODEL=qwen2.5-coder:7b && echo "ACE_OLLAMA_MODEL=$ACE_OLLAMA_MODEL"
 ```
 
 *Open defect: the selector should be an allowlist, not "whatever sorts first".*
@@ -191,13 +190,30 @@ ALL SEATS HEALTHY
 
 Per-seat probes, when you need to isolate one:
 
+> **One tier per fence.** These three probes have three different costs, so they get
+> three fences. Never mix tiers in one fence: the tier lives in the fence info string,
+> the validator *executes* anything tagged `T1`, and a multi-command fence returns only
+> its **last** command's exit code — so a mixed fence both runs commands you meant to
+> protect and hides failures in the ones above.
+
+Local seat — free, offline, safe to run in a loop:
+
 ```bash tier=T1
-# T1  — free, local
 ~/.claude/scripts/adapters/ollama.sh --health          # → OLLAMA-OK (qwen2.5-coder:7b)
-# T1  — catalog read on a paid key, no completion, no tokens. This is what --fast runs.
+```
+
+OpenAI seat — a catalog read, no completion and no tokens spent, but it needs a valid key
+and network, so it is **not** deterministic enough to auto-execute (observed: four
+consecutive HTTP 500s that resolved to a perfectly valid key):
+
+```bash tier=T3 verified=2026-07-29
 ~/.claude/scripts/adapters/openai.sh --health          # → OPENAI-OK (key valid; 119 models available)
-# T3  — spends agy OAuth quota; verified: manual 2026-07-29. Do not loop.
-~/.claude/scripts/adapters/agy.sh    --health          # → AGY-OK (mode=argv)   [~8s]
+```
+
+agy seat — spends OAuth quota and takes ~8s. Run once per session; never in a loop:
+
+```bash tier=T3 verified=2026-07-29
+~/.claude/scripts/adapters/agy.sh    --health          # → AGY-OK (mode=argv)
 ```
 
 ---

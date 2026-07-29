@@ -295,8 +295,10 @@ does.
 **Both gates executed live (T1, 2026-07-29):**
 
 ```bash tier=T1
+set -e   # fail-fast: without this the fence returns only the LAST exit code and a
+         # broken step above is silently masked (see the note below)
 cd /Users/sebastianziegler/ace-unify
-/usr/local/bin/python3.11 -c "import json,os;d=json.load(open('plugin.json'));[print(p, os.path.exists(p.lstrip('./'))) for p in d['commands']+d['skills']]"
+/usr/local/bin/python3.11 -c "import json,os;d=json.load(open('.claude-plugin/plugin.json'));[print(p, os.path.exists(p.lstrip('./'))) for p in d['commands']+d['skills']]"
 /usr/local/bin/python3.11 -m pytest -q
 ```
 ```
@@ -307,9 +309,17 @@ cd /Users/sebastianziegler/ace-unify
 ./skills/ace-debate True
 ./skills/ace-plan True
 ./skills/ace-doctor True                <-- Step 2 gate PASSES: every manifest path resolves
-...................................                                      [100%]
-35 passed in 0.93s                      <-- Step 3 gate passes
+......................................                                   [100%]
+38 passed in 1.06s                      <-- Step 3 gate passes
 ```
+
+> **Two gate defects this fence caught, both worth internalizing.**
+> 1. The manifest was originally at `plugin.json` (repo root). Claude Code requires it at
+>    **`.claude-plugin/plugin.json`** — at the root the plugin silently never loads and
+>    `/ace:debate` simply does not exist. Moving it changed this command's path.
+> 2. Without `set -e`, this fence exited **0** even while the middle command threw
+>    `FileNotFoundError`, because only the last command's status is returned. A gate that
+>    cannot fail is not a gate — always guard a multi-command fence.
 
 > **Why this gate earns its keep.** When this example was first written, the same command
 > printed `./.claude/commands/ace.md False` — `plugin.json` shipped a **dangling command
