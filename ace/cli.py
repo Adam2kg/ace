@@ -5,7 +5,7 @@ CLI entry point.
 Usage:
     ace run <topic>                    # single ACE cycle
     ace run <topic> --cycles 3        # N diverge→synthesize cycles
-    ace run <topic> --providers codex,agy
+    ace run <topic> --providers agy
     ace status                         # show coupling state (requires --state-file)
     ace debt --state-file ace_state.json  # show attractor debt
 """
@@ -64,7 +64,6 @@ _HUMAN_PRESET_RECOMMENDED = "human-adhd"
 # Provider display metadata — single source of truth for banner rows.
 # Keep in sync with the indicator map used when printing divergence results.
 _PROVIDER_ROWS = {
-    "codex": ("🔴", "divergence (technical branches)"),
     "agy": ("🧭", "divergence (lateral branches; live Google seat)"),
     "gemini": ("🟡", "divergence (legacy — deprecated, superseded by agy)"),
 }
@@ -295,7 +294,7 @@ def run(
         all_branches = []
         live_providers = set()
         for r in results:
-            indicator = {"codex": "🔴", "agy": "🧭"}.get(r.provider, "🟡")
+            indicator = {"agy": "🧭", "ollama": "🖥"}.get(r.provider, "🟡")
             if not r.available:
                 console.print(f"{indicator} [red]{r.provider}[/red]: unavailable ({r.error})")
                 continue
@@ -356,8 +355,9 @@ def run(
         if routing.escalate_divergence:
             console.print(
                 "  [bold yellow]↑ ESCALATE DIVERGENCE:[/bold yellow] branches agree too much "
-                "(shared blind spot) — add a different model family next cycle, e.g. "
-                "[dim]--providers ollama,codex[/dim]."
+                "(shared blind spot) — bring in a different model FAMILY next cycle: ensure agy is "
+                "in [dim]--providers[/dim], or run one decorrelated pass via the openai adapter "
+                "(local ollama is never an independent judgment seat)."
             )
 
         # Track all branches in coupling state (mark as surfaced for debt tracking)

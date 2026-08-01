@@ -15,12 +15,14 @@ description: >-
   Debate owns critique of an artifact that already exists; ACE:plan's internal review
   pass never handles a user-supplied plan. For turning an already-made decision into an
   ordered executable plan, use ACE:plan instead.
-  If the failure is that a seat produced nothing at all, use ACE:doctor first — do not
-  read the debate troubleshooting reference for a dead seat.
-  Successor to the retired /octo:debate, /octo:skill-debate and /octo:council; if those
-  are still installed they will also match "debate this" — prefer ACE:debate, because
-  the Octopus versions dispatch to providers that no longer exist (codex is quota-dead,
-  the gemini CLI is retired).
+  Also the home of `ace run` usage-error triage: "ace run crashed with a traceback",
+  "ValueError: No known divergence providers", "--providers codex / gemini errors — what
+  do I run instead?" — see this skill's Triage table. ACE:doctor is for seats that are
+  silently DEAD (produced nothing at all); a run that refuses to start with a named
+  error is triaged here.
+  Successor to the retired /octo:debate, /octo:skill-debate and /octo:council; those
+  also match "debate this" — prefer ACE:debate; the Octopus versions dispatch to
+  providers that no longer exist (codex is quota-dead, the gemini CLI retired).
 ---
 
 # /ACE:debate — cognitive-divergence debate
@@ -28,9 +30,6 @@ description: >-
 Debate is ACE's **divergence** command. It deliberately generates disagreeing views of one
 problem, scores them, and hands you a synthesis prompt. It does **not** hand you an answer —
 you (or Claude, as the synthesis engine) close the loop.
-
-Evidence for its existence: `/octo:debate` was invoked 12 times by the owner — the highest-demand
-survivor of the Octopus retirement, and the most recent Octopus command run before the migration.
 
 **Vocabulary (defined once):**
 
@@ -173,6 +172,12 @@ Key facts that are easy to get wrong:
 - **`_parse_branches` only accepts lines starting with a digit, `-`, `*`, or `•`, with >10 chars of
   content.** A seat that answers in prose paragraphs yields **zero branches** while reporting
   `available=True`. This is the most common silent failure.
+- **The inverse failure also occurs.** A seat answering with structured multi-line entries
+  (Title / `Label:` / `Rationale:` lines each starting with `-`, `*`, or a digit) gets **each
+  line** parsed as a branch — N ideas can report as 3N fragments with field-label "titles".
+  Fragments score near-zero coherence, drag `survival` down, and can flip the routing regime to
+  `ambiguous`. Sanity-check every run: if branch count far exceeds distinct ideas, or titles look
+  like field labels, distrust the routing line for that cycle and dedupe by eye before synthesis.
 - **Only two runners exist.** `runners = {"agy": _run_agy, "ollama": _run_ollama}`. `_run_codex` and
   `_run_gemini` were deleted (codex quota-dead, exit 137; gemini CLI retired).
 
@@ -184,10 +189,8 @@ Key facts that are easy to get wrong:
 | `ollama` | local Qwen | **Not a debate peer** (see below). Privacy-bound and bulk work. | game-design, logistics, ant-colony, adversary, inversion, extreme-infinite, remove-assumption |
 | Claude | — | Synthesis engine. Reads the panel, holds the trajectory. | — |
 
-`agy`'s grounding was independently verified: asked to fetch
-`api.github.com/repos/ollama/ollama/releases/latest` it returned `v0.32.5`, matching Claude's own
-fetch exactly. It genuinely retrieves live sources rather than reciting training data.
-(verified: manual 2026-07-29)
+`agy`'s grounding was independently verified (manual, 2026-07-29): asked for the latest ollama
+release it returned `v0.32.5`, matching Claude's own fetch — live retrieval, not recitation.
 
 Full 15-frame catalog with "when each frame bites": **[references/frame-catalog.md](references/frame-catalog.md)**
 
@@ -212,10 +215,9 @@ That last row is the important one. Frames decorrelate the **question-space expl
 **error distribution** — every frame still runs on one model and inherits its factual priors. On
 high-stakes items fire one cross-family probe regardless of what the agreement signal says.
 
-Reinforcing that: the `> 0.80` alarm is **conservative in practice**. Measured on this branch
-(T1, executed 2026-07-29) three heavily-paraphrased branches expressing the *same* idea scored
-`inter_frame_agreement = 0.387` — well below the trigger. Only near-verbatim vocabulary reuse
-reached `1.0`. Treat a silent alarm as weak evidence, not as an all-clear.
+Reinforcing that: the `> 0.80` alarm is **conservative in practice** — measured on this branch
+(T1, executed 2026-07-29), three heavy paraphrases of the *same* idea scored `inter_frame_agreement
+= 0.387`; only near-verbatim vocabulary reuse hit `1.0`. A silent alarm is weak evidence, not an all-clear.
 
 ---
 
@@ -337,6 +339,7 @@ Full narrative with real pasted output at every step:
 | Banner said "no external providers used" but agy was still called | The frames-only defect (see box above) | Name the seat you actually want with `--providers`; do not trust the preset's claim. |
 | `agy: unavailable (empty_output)` | Auth expired, or an agy version bump changed the input contract | `~/.claude/scripts/adapters/agy.sh --health` (T3). Re-auth via agy's own login. Re-run `--health` after every agy version bump. |
 | Seat available, **0 branches** | Reply was prose; `_parse_branches` needs `1.`/`-`/`*`/`•` lines | Re-run. If it repeats, the seat is effectively dead for this topic — drop it and run the frames on Claude in-conversation. |
+| Branch count ≫ distinct ideas; titles look like field labels | `_parse_branches` split one structured idea into per-line fragments | Dedupe by eye; ignore `survival`/routing this cycle; re-run asking the seat for a flat numbered list. |
 | `ollama: unavailable`, message mentions FAIL CLOSED | Model not present locally; the adapter refuses to auto-pull (a cascade once triggered a ~42 GB download) | Pre-pull explicitly: `ollama pull qwen2.5-coder:7b`. |
 | `No branches from any divergence provider` → exit 1 | Every seat failed | `/ACE:doctor`. Then run the frames on Claude in-conversation rather than re-dispatching. |
 | `ValueError: No known divergence providers in: …` | Every name in `--providers` is unknown to the runner table — `--providers codex` or `--providers gemini` (both runners were deleted in the 2026-07 prune) | Use only `agy` and/or `ollama`; the message lists what is available. A *partially* valid list still runs the valid seats — unknown names are dropped silently, so `--providers codex,ollama` runs ollama alone. (Confirmed T1, 2026-07-29. Before the fix this crashed with the opaque `max_workers must be greater than 0`.) |

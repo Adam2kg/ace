@@ -172,6 +172,12 @@ Then assemble:
 ace run "<topic>" --preset <preset> [--human-mode] [--cycles N]
 ```
 
+**Non-interactive use:** `ace run` prompts for a synthesis focus (`click.prompt`,
+cli.py) at the end of EVERY cycle. With no tty the prompt raises
+`click.exceptions.Abort` and the cycle is lost AFTER the divergence seat has
+already been paid. Pipe one answer per cycle — e.g. for `--cycles 2`:
+`printf "4\n4\n" | /usr/local/bin/python3.11 -m ace.cli run "<topic>" --preset <preset> --cycles 2`.
+
 If `ace` CLI is not available:
 ```bash tier=T3 verified=2026-07-29
 cd ~/ace && pip install -e .
@@ -362,6 +368,12 @@ Options:
   --human-mode  Activate Mirror mode. AI amplifies your thinking instead of
                 driving it. Suppresses convergence warnings.
   --cycles N    Number of divergence-synthesis cycles. Default: 1.
+  --providers   Comma-separated divergence seats. DEFAULT: agy — the PAID
+                OAuth seat: every default run spends quota. Free/local:
+                --providers ollama. Valid names: agy, ollama ONLY (codex and
+                gemini deleted 2026-07). Unknown names in a MIXED list are
+                dropped silently — `codex,ollama` runs ollama alone; an
+                all-unknown list fails loud (ValueError names the prune).
   --state-file  Path to persist coupling state across sessions.
   --help        Show this message and exit.
 

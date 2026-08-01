@@ -139,13 +139,22 @@ When they disagree, doctor wins.
 
 ---
 
+**Tier legend:** T1 = free, deterministic, read-only — automated validators execute
+anything tagged T1. T2 = dry-runnable. T3 = paid, quota-spending, mutating, or
+network-nondeterministic — manual only. The tier lives in the fence info string.
+
 ## Run it
 
-**Default — the free path:**
+**Default — token-free (not offline):**
+
+**Touches the network:** `GET /v1/models` runs against the OpenAI API and needs
+`$OPENAI_API_KEY`. For a strictly-local / no-cloud / no-key check, run ONLY the ollama
+probe: `~/.claude/scripts/adapters/ollama.sh --health` (T1, offline-safe).
 
 ```bash tier=T3 verified=2026-07-29
-# T1 (read-only, free) — skips agy only. Issues just /api/tags + a 16-token local
-# generate + GET /v1/models. Use before local/bulk work.
+# Token-free but NOT T1: still issues GET /v1/models against the OpenAI API (needs
+# key + egress). Skips agy only. Use before local/bulk work; for strictly-local
+# checks use the ollama probe above.
 ~/.claude/scripts/adapters/doctor.sh --fast
 ```
 
@@ -234,6 +243,7 @@ agy seat — spends OAuth quota and takes ~8s. Run once per session; never in a 
 | `openai ⚠️ OPENAI SERVER ERROR (HTTP 5xx)` | Transient OpenAI outage. **A 500 does NOT mean the key is dead** | Retry later. Do not rotate, do not "fix" anything. (A live four-500 outage is documented in `references/seat-contracts.md` § openai) |
 | `openai ❌ NETWORK unreachable (no HTTP status)` | No egress | Check the network; this says nothing about the key |
 | `handoff ❌ missing or unparseable` | `~/.claude/scripts/handoff-v2.sh` absent or has a syntax error | Restore it; `bash -n` it before relying on a handoff |
+| `ValueError: No known divergence providers in: …` (raw traceback, exit 1) | Usage error — every name in `--providers` was pruned (codex/gemini deleted 2026-07) | Use only `agy` and/or `ollama`. Note: a PARTIALLY valid list (e.g. `codex,ollama`) does NOT error — unknown names are dropped silently and the valid seats run alone. Full triage: /ACE:debate § Triage |
 | Everything reports healthy but a debate round is garbage | Zombie you have not caught yet | Open the round file. If it is a stack trace, an `.err` dump, or off-topic prose, discard the round and re-run doctor. Report it — the gate needs a new content assertion |
 
 ---
@@ -316,7 +326,7 @@ and gemini: `references/seat-contracts.md`.
 
 | Fact | Date verified | Tier | Re-verify with |
 |---|---|---|---|
-| doctor.sh `--fast` output, exit 0 (21:20) | 2026-07-29 | T1 | `~/.claude/scripts/adapters/doctor.sh --fast` |
+| doctor.sh `--fast` output, exit 0 (21:20) | 2026-07-29 | T3 (network + key; not deterministic) | `~/.claude/scripts/adapters/doctor.sh --fast` |
 | Full doctor.sh output incl. agy | 2026-07-29 | T3 (manual — spends agy quota) | `~/.claude/scripts/adapters/doctor.sh` |
 | agy `--health` can only exit 0/1/69 (124 unreachable) | 2026-07-29 | T1 | `grep -n '_bounded' ~/.claude/scripts/adapters/agy.sh` — both call sites are command substitutions; the status is discarded |
 | `_ollama_model()` defaults to first row of `ollama list` | 2026-07-29 | T1 | `grep -n 'out\[1\]' ace/agents/divergence.py` |
