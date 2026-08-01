@@ -1,0 +1,40 @@
+{
+  "name": "ace-plugins",
+  "owner": {
+    "name": "Adam2kg",
+    "url": "https://github.com/Adam2kg"
+  },
+  "metadata": {
+    "description": "ACE — Asymmetric Cognitive Equilibrium plugins for Claude Code.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "ace",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Adam2kg/ace.git"
+      },
+      "description": "Cognitive-divergence toolkit: /ace:debate (frames×providers divergence), /ace:plan (falsifiable convergence), /ace:doctor (zombie-safe provider health). Mirror + Governor modes.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Adam2kg",
+        "url": "https://github.com/Adam2kg"
+      },
+      "repository": "https://github.com/Adam2kg/ace",
+      "homepage": "https://github.com/Adam2kg/ace",
+      "license": "MIT",
+      "keywords": [
+        "cognitive-divergence",
+        "thinking-scaffold",
+        "mirror-mode",
+        "governor-mode",
+        "agy",
+        "ollama",
+        "openai",
+        "claude-code-plugin"
+      ],
+      "category": "orchestration"
+    }
+  ]
+}
