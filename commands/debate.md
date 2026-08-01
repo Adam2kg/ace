@@ -25,7 +25,7 @@ what to do and wants ordered steps, stop and route them to `/ACE:plan` instead.
    worktree build. System `python3` is 3.9 and cannot import the package.
 
    ```bash
-   cd /Users/sebastianziegler/ace-unify
+   cd /Users/sebastianziegler/ace
    ~/.claude/scripts/adapters/doctor.sh --fast
    /usr/local/bin/python3.11 -m ace.cli banner --preset <preset> --providers <seats>
    ```

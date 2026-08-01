@@ -3,7 +3,7 @@
 `/ACE:plan` does **not** require the `ace` CLI. Planning is synthesis; the CLI is a divergence
 engine. This file covers the minority of cases where running it alongside a plan earns its
 keep, and documents the flags that actually exist (verified against
-`/Users/sebastianziegler/ace-unify/ace/cli.py`, 2026-07-29).
+`/Users/sebastianziegler/ace/ace/cli.py`, 2026-07-29).
 
 Tier codes (T1/T3) are defined in `SKILL.md` § *Command verification*.
 
@@ -74,7 +74,7 @@ Values read live from `ace/presets.py` on 2026-07-29 via:
 
 ```bash tier=T1
 # cd first: the import needs the repo root on sys.path, so this is cwd-dependent.
-cd ~/ace-unify && /usr/local/bin/python3.11 -c "from ace.presets import PRESETS; [print(k, v.mode, v.divergence_model, v.synthesis_model, v.synthesis_strength) for k,v in PRESETS.items()]"
+cd ~/ace && /usr/local/bin/python3.11 -c "from ace.presets import PRESETS; [print(k, v.mode, v.divergence_model, v.synthesis_model, v.synthesis_strength) for k,v in PRESETS.items()]"
 ```
 
 ---
@@ -96,7 +96,7 @@ run it from the repo instead:
 
 ```bash tier=T1
 # T1 — executed 2026-07-29, prints the coupling banner + live provider rows
-cd /Users/sebastianziegler/ace-unify && /usr/local/bin/python3.11 -m ace.cli banner --preset architecture --providers agy
+cd /Users/sebastianziegler/ace && /usr/local/bin/python3.11 -m ace.cli banner --preset architecture --providers agy
 ```
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮

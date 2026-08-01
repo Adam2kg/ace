@@ -1,0 +1,17 @@
+{
+  "interrupt_budget": 8,
+  "receptivity": "open",
+  "deferred_count": 2,
+  "trajectory_segments_completed": 1,
+  "attractor_debt": {
+    "[agy] Parasitic Background Drip-Feeding*": 0.0004170431331384846,
+    "[agy] The \"Proof of Work\" Triage Protoco": 0.0004170420394007753
+  },
+  "high_debt_branches": [],
+  "relational_context": {
+    "avg_response_time": 110.91154026985168,
+    "accepted_count": 2,
+    "deferred_count": 0,
+    "phase": "divergent"
+  }
+}

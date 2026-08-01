@@ -147,7 +147,7 @@ unconditional cross-family probe on high-stakes items instead of waiting for the
 
 `/usr/local/bin/ace` is an editable install that resolves the package to
 `/Users/sebastianziegler/ace/ace/__init__.py` — the **owner's working tree**, not the
-`ace-unify` worktree. Verified 2026-07-29:
+`~/ace` checkout (merged from the ace-unify worktree). Verified 2026-07-29:
 
 ```
 $ /usr/local/bin/python3.11 -c "import ace; print(ace.__file__)"
@@ -158,7 +158,7 @@ So `ace run …` may execute *different code* from the branch you are reading. T
 branch specifically:
 
 ```bash tier=T3 verified=2026-07-29
-cd /Users/sebastianziegler/ace-unify && /usr/local/bin/python3.11 -m ace.cli run "<topic>" ...
+cd /Users/sebastianziegler/ace && /usr/local/bin/python3.11 -m ace.cli run "<topic>" ...
 ```
 
 Note also that system `python3` is 3.9 and cannot even import this package (modern type syntax).

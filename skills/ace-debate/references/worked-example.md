@@ -15,7 +15,7 @@ All commands run from the worktree, because the `ace` on PATH is a different, ol
 Confirm the seat is real before spending quota.
 
 ```bash tier=T3 verified=2026-07-29
-cd /Users/sebastianziegler/ace-unify
+cd /Users/sebastianziegler/ace
 ~/.claude/scripts/adapters/doctor.sh --fast
 /usr/local/bin/python3.11 -m ace.cli banner --preset architecture --providers agy
 ```

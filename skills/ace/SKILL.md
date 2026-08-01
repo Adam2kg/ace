@@ -98,7 +98,7 @@ The engine renders its own banner — coupling, models, frames mode, and **live*
 provider availability. Run it and show its output to the user verbatim:
 
 ```bash tier=T1
-cd ~/ace-unify && /usr/local/bin/python3.11 -m ace.cli banner --preset architecture
+cd ~/ace && /usr/local/bin/python3.11 -m ace.cli banner --preset architecture
 ```
 
 > ⚠️ **Use the module form above, not bare `ace banner`.** Verified 2026-07-29: the

@@ -74,15 +74,15 @@ real entry points are `ace run`, `ace banner`, `ace debt`.
 > `--coherence-floor`, and no `ace/coupling/routing.py` (so no `⇄ ROUTING` line)**, and its
 > `--providers` still defaults to `codex,agy`. Everything documented here was read off
 > `feat/ace-unified`. Exercise **this** branch explicitly:
-> `cd /Users/sebastianziegler/ace-unify && /usr/local/bin/python3.11 -m ace.cli <subcommand> …`
+> `cd /Users/sebastianziegler/ace && /usr/local/bin/python3.11 -m ace.cli <subcommand> …`
 > System `python3` is 3.9 and cannot import the package. Details:
 > [references/troubleshooting.md §7](references/troubleshooting.md).
 
-Every fence below assumes you are already in `/Users/sebastianziegler/ace-unify`.
+Every fence below assumes you are already in `/Users/sebastianziegler/ace`.
 
 ```bash tier=T3 verified=2026-07-29
 # T1 — preflight: what will this cost me, and are the seats alive?
-cd /Users/sebastianziegler/ace-unify
+cd /Users/sebastianziegler/ace
 /usr/local/bin/python3.11 -m ace.cli banner --preset architecture --providers agy
 ~/.claude/scripts/adapters/doctor.sh --fast
 ```
@@ -378,7 +378,7 @@ Longer incident chronicles: **[references/troubleshooting.md](references/trouble
 
 Facts here are dated **2026-07-29** and read off branch `feat/ace-unified` — **not** off the `ace`
 on your PATH (see the caveat under *Quick start*). Run every check below from
-`/Users/sebastianziegler/ace-unify`:
+`/Users/sebastianziegler/ace`:
 
 | Claim | Re-verification (tier) |
 |---|---|

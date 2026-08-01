@@ -297,7 +297,7 @@ does.
 ```bash tier=T1
 set -e   # fail-fast: without this the fence returns only the LAST exit code and a
          # broken step above is silently masked (see the note below)
-cd /Users/sebastianziegler/ace-unify
+cd /Users/sebastianziegler/ace
 /usr/local/bin/python3.11 -c "import json,os;d=json.load(open('.claude-plugin/plugin.json'));[print(p, os.path.exists(p.lstrip('./'))) for p in d['commands']+d['skills']]"
 /usr/local/bin/python3.11 -m pytest -q
 ```
