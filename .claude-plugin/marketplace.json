@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "ACE — Asymmetric Cognitive Equilibrium plugins for Claude Code.",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
@@ -16,7 +16,7 @@
         "url": "https://github.com/Adam2kg/ace.git"
       },
       "description": "Cognitive-divergence toolkit: /ace:debate (frames×providers divergence), /ace:plan (falsifiable convergence), /ace:doctor (zombie-safe provider health). Mirror + Governor modes.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Adam2kg",
         "url": "https://github.com/Adam2kg"
