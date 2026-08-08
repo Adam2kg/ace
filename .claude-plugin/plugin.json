@@ -1,7 +1,7 @@
 {
   "name": "ace",
-  "version": "0.2.1",
-  "description": "Asymmetric Cognitive Equilibrium — cognitive-divergence toolkit for Mirror (human thinking scaffold) and Governor (AI thinking scaffold) modes. Provides /ace:debate (divergence), /ace:plan (convergence), /ace:doctor (provider seat health).",
+  "version": "0.3.0",
+  "description": "Asymmetric Cognitive Equilibrium — cognitive-divergence toolkit for Mirror (human thinking scaffold) and Governor (AI thinking scaffold) modes. Provides /ace:debate (divergence), /ace:plan (convergence), /ace:debug (hypothesis falsification), /ace:review (decorrelated diff review), /ace:doctor (provider seat health).",
   "author": {
     "name": "Adam2kg",
     "url": "https://github.com/Adam2kg"
@@ -24,11 +24,15 @@
     "./skills/ace",
     "./skills/ace-debate",
     "./skills/ace-plan",
+    "./skills/ace-debug",
+    "./skills/ace-review",
     "./skills/ace-doctor"
   ],
   "commands": [
     "./commands/debate.md",
     "./commands/plan.md",
+    "./commands/debug.md",
+    "./commands/review.md",
     "./commands/doctor.md"
   ]
 }
